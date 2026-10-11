@@ -1,0 +1,21 @@
+# Local user configuration and private observations from the original project.
+/watch.json
+/monitor.py
+/mobile-watch.json
+/config.local.json
+/config.*.local.json
+/observation.json
+/status.json
+/pan-web-test.json
+/evidence/
+/.runtime/
+/.env
+/.env.*
+!/.env.example
+__pycache__/
+*.py[cod]
+.DS_Store
+*.log
+*.png
+*.jpg
+*.mp4

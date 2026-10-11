@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "mode": "dry_run",
+  "device": {"serial_env": "DAMAI_DEVICE_SERIAL", "manufacturer": "vivo", "model": "V2547A", "transport": "usb"},
+  "profile": {"id": "unverified", "package": "cn.damai", "version": null, "verified": false, "evidence_ref": null},
+  "poll": {"local_minimum_seconds": 5, "readiness_check_seconds": 2, "changed_poll_seconds": 5, "stable_poll_seconds": 15, "stable_max_seconds": 60, "max_loading_seconds": 30, "max_read_errors": 3, "max_backoff_seconds": 300, "heartbeat_timeout_seconds": 30, "snapshot_ttl_seconds": 20, "max_polls": 120, "max_session_seconds": 1800, "service_minimum_seconds": null, "service_frequency_verified": false},
+  "orders_enabled": false,
+  "constraints": {"verified": false, "max_unpaid_orders": null, "allow_split_orders": false},
+  "events": [
+    {"key": "event-a", "target": {"item_id": null, "name": null, "city": null, "starts_at": null}, "quantity": null, "tiers": [], "strategy": "priority", "seating": "required", "budget_minor": null, "window": {"start": null, "end": null}, "spectator_refs": [], "verified": false},
+    {"key": "event-b", "target": {"item_id": null, "name": null, "city": null, "starts_at": null}, "quantity": null, "tiers": [], "strategy": "lowest", "seating": "preferred", "budget_minor": null, "window": {"start": null, "end": null}, "spectator_refs": [], "verified": false}
+  ]
+}
