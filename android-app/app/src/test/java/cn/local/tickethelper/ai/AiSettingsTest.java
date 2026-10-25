@@ -9,6 +9,8 @@ public final class AiSettingsTest {
     @Test public void emptyDefaultsCannotAccidentallyEnableAProvider() {
         AiSettings defaults = AiSettings.defaults();
         assertFalse(defaults.enabled); assertEquals("", defaults.baseUrl); assertEquals("", defaults.model);
+        assertEquals(8192, defaults.maxOutputTokens); assertEquals(0, defaults.dailyCallLimit);
+        assertEquals(32768, defaults.maxInputChars); assertEquals(120, defaults.timeoutSeconds);
         assertTrue(defaults.validate().isEmpty());
         assertFalse(new AiSettings(true, "", "", 1024, 20, false).validate().isEmpty());
     }
@@ -39,13 +41,42 @@ public final class AiSettingsTest {
             assertFalse(new AiSettings(true, "https://api.example.com/v1", model, 1024, 20, false).validate().isEmpty());
     }
 
-    @Test public void outputAndDailyBudgetsHaveHardBounds() {
-        for (int tokens : new int[]{-1, 0, 127, 4097, Integer.MAX_VALUE})
+    @Test public void explicitBudgetsSupportLargeValuesAndOptionalLimits() {
+        for (int tokens : new int[]{-1, 127, 131073, Integer.MAX_VALUE})
             assertFalse(new AiSettings(true, "https://api.example.com", "model", tokens, 20, false).validate().isEmpty());
-        for (int calls : new int[]{-1, 0, 101, Integer.MAX_VALUE})
+        for (int calls : new int[]{-1, 1_000_001, Integer.MAX_VALUE})
             assertFalse(new AiSettings(true, "https://api.example.com", "model", 1024, calls, false).validate().isEmpty());
         assertTrue(new AiSettings(true, "https://api.example.com", "model", 128, 1, false).validate().isEmpty());
-        assertTrue(new AiSettings(true, "https://api.example.com", "model", 4096, 100, true).validate().isEmpty());
+        assertTrue(new AiSettings(true, "https://api.example.com", "model", 131072, 1_000_000, true).validate().isEmpty());
+        assertTrue(new AiSettings(true, "https://api.example.com", "model", 0, 0, false).validate().isEmpty());
+    }
+
+    @Test public void inputAndWaitLimitsAreIndependentlyConfigurable() {
+        for (int size : new int[]{-1, 0, 1999, 262145, Integer.MAX_VALUE})
+            assertFalse(new AiSettings(true, "https://api.example.com", "model", 8192, 0, false, size, 120).validate().isEmpty());
+        for (int seconds : new int[]{-1, 0, 14, 601, Integer.MAX_VALUE})
+            assertFalse(new AiSettings(true, "https://api.example.com", "model", 8192, 0, false, 32768, seconds).validate().isEmpty());
+        assertTrue(new AiSettings(true, "https://api.example.com", "model", 8192, 0, false, 2000, 15).validate().isEmpty());
+        assertTrue(new AiSettings(true, "https://api.example.com", "model", 8192, 0, false, 262144, 600).validate().isEmpty());
+    }
+
+    @Test public void combinedInputLimitIncludesBothRolesAndNeverTruncates() {
+        AiSettings value = new AiSettings(true, "https://api.example.com", "model", 8192, 0, false, 2000, 120);
+        value.validateInput("s".repeat(500), "q".repeat(1500));
+        try { value.validateInput("s".repeat(500), "q".repeat(1501)); fail("Oversized combined prompt accepted"); }
+        catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("未被截短")); }
+        for (String empty : new String[]{null, ""}) {
+            try { value.validateInput("policy", empty); fail("Empty question accepted"); }
+            catch (IllegalArgumentException expected) { assertTrue(expected.getMessage().contains("为空")); }
+        }
+    }
+
+    @Test public void frozenPreviewBindingIncludesNewCapacityFields() {
+        AiSettings value = new AiSettings(true, "https://api.example.com", "model", 8192, 0, false, 32768, 120);
+        assertTrue(value.matchesRequestSettings(new AiSettings(true, "https://api.example.com/v1/chat/completions", "model", 8192, 0, false, 32768, 120)));
+        assertFalse(value.matchesRequestSettings(new AiSettings(true, "https://other.example.com", "model", 8192, 0, false, 32768, 120)));
+        assertFalse(value.matchesRequestSettings(new AiSettings(true, "https://api.example.com", "model", 8192, 0, false, 65536, 120)));
+        assertFalse(value.matchesRequestSettings(new AiSettings(true, "https://api.example.com", "model", 8192, 0, false, 32768, 600)));
     }
 
     @Test public void headerInjectionAndWhitespaceKeysAreRejected() {

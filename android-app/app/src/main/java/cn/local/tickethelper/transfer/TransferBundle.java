@@ -198,7 +198,7 @@ public final class TransferBundle {
         MonitorConfig config = new MonitorConfig(bounded(p.get("event"), 160), bounded(p.get("city"), 80),
                 bounded(p.get("date"), 10), bounded(p.get("time"), 5), prices,
                 integer(p.get("quantity"), 1, 1), integer(p.get("max_total"), 1, 100000), deadline,
-                integer(p.get("min_interval_ms"), 3000, 600000), integer(p.get("max_interval_ms"), 3000, 600000), mode);
+                integer(p.get("min_interval_ms"), MonitorConfig.MIN_INTERVAL_MS, MonitorConfig.MAX_INTERVAL_MS), integer(p.get("max_interval_ms"), MonitorConfig.MIN_INTERVAL_MS, MonitorConfig.MAX_INTERVAL_MS), mode);
         if (!config.validate().isEmpty()) throw invalid("配置内容不正确，未应用任何目标");
         return new ConfigResult(config, downgraded);
     }

@@ -20,6 +20,7 @@ import android.os.PowerManager;
 import android.os.SystemClock;
 import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
+import cn.local.tickethelper.core.ActionPacing;
 import cn.local.tickethelper.core.Decision;
 import cn.local.tickethelper.core.DecisionEngine;
 import cn.local.tickethelper.core.MonitorConfig;
@@ -287,6 +288,12 @@ public final class MonitorService extends AccessibilityService {
         if (!busy) schedule(500);
     }
 
+    public boolean isWaitingForDamai() { return running && !targetSeen; }
+
+    public int waitingForDamaiSeconds() {
+        return isWaitingForDamai() ? (int) Math.max(0, (20_000L - (SystemClock.elapsedRealtime() - startedAt) + 999) / 1000) : 0;
+    }
+
     private boolean unlocked() {
         return getSystemService(PowerManager.class).isInteractive()
                 && !getSystemService(KeyguardManager.class).isKeyguardLocked();
@@ -429,11 +436,11 @@ public final class MonitorService extends AccessibilityService {
             default:
                 unknownCount = 0; status("已识别目标页面，正在检查票档。"); break;
         }
-        if (decision.action != Decision.Action.NONE && SystemClock.elapsedRealtime() >= nextActionAt) {
+        if (ActionPacing.mayDispatch(decision, System.currentTimeMillis(), SystemClock.elapsedRealtime(), nextActionAt, actionFailures > 0)) {
             act(decision, token, pageToken); return;
         }
         busy = false;
-        schedule(Math.max(700, Math.min(config.minIntervalMs, nextActionAt - SystemClock.elapsedRealtime())));
+        schedule(Math.max(MonitorConfig.MIN_INTERVAL_MS, Math.min(config.minIntervalMs, nextActionAt - SystemClock.elapsedRealtime())));
     }
 
     private boolean orderGrantCurrent() {
@@ -643,7 +650,7 @@ public final class MonitorService extends AccessibilityService {
         if (!orderEngine.revalidateForDispatch(config, orderAuthorization, readOrderPage(), proposal,
                 liveOrderAttempt, System.currentTimeMillis())) return null;
         if (!orderInputFresh(proposal, token, pageToken)) return null;
-        AccessibilityNodeInfo node = CheckoutNativeTarget.find(this, proposal.submitTarget, proposal.windowId,
+        AccessibilityNodeInfo node = OrderCheckoutAdapter.findSubmitTarget(this, proposal, () -> windowGeneration,
                 SystemClock.elapsedRealtime() + 80);
         return node != null && orderInputFresh(proposal, token, pageToken) ? node : null;
     }

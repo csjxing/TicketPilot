@@ -15,6 +15,7 @@ public final class CheckoutObservation {
             agreementsAccepted, uniqueNativeSubmitTarget, orderReferenceVerified, authoritativeInventoryRejection,
             orderCreationTimeVerified;
     public final UiItem submitTarget;
+    public final CheckoutSubmitBinding submitBinding;
     /** Raw reference is ephemeral. Only its digest may enter persistent attempt storage. */
     public final String orderReference, paymentDeadlineText;
     private CheckoutObservation(Builder b) {
@@ -28,7 +29,7 @@ public final class CheckoutObservation {
         viewerSelectionVerified=b.viewerSelectionVerified; noUnapprovedExtras=b.noUnapprovedExtras;
         agreementsAccepted=b.agreementsAccepted; uniqueNativeSubmitTarget=b.uniqueNativeSubmitTarget;
         orderReferenceVerified=b.orderReferenceVerified; authoritativeInventoryRejection=b.authoritativeInventoryRejection;
-        submitTarget=b.submitTarget; orderReference=b.orderReference; paymentDeadlineText=b.paymentDeadlineText;
+        submitTarget=b.submitTarget; submitBinding=b.submitBinding; orderReference=b.orderReference; paymentDeadlineText=b.paymentDeadlineText;
     }
     public static final class Builder {
         private final Kind kind; private final long observedAtMs;
@@ -39,6 +40,7 @@ public final class CheckoutObservation {
         private boolean sameFrame,nativeWindowVerified,viewerSelectionVerified,noUnapprovedExtras,agreementsAccepted,
                 uniqueNativeSubmitTarget,orderReferenceVerified,authoritativeInventoryRejection,orderCreationTimeVerified;
         private UiItem submitTarget;
+        private CheckoutSubmitBinding submitBinding;
         public Builder(Kind kind,long observedAtMs) { this.kind=kind==null?Kind.UNKNOWN:kind; this.observedAtMs=observedAtMs; }
         public Builder frame(String pkg,int windowId,long generation,boolean sameFrame,boolean verified) {
             packageName=CheckoutIdentity.clean(pkg); this.windowId=windowId; frameGeneration=generation;
@@ -56,7 +58,10 @@ public final class CheckoutObservation {
         }
         public Builder extras(boolean noneUnapproved) { noUnapprovedExtras=noneUnapproved; return this; }
         public Builder agreements(boolean accepted) { agreementsAccepted=accepted; return this; }
-        public Builder submit(UiItem target,boolean unique) { submitTarget=target; uniqueNativeSubmitTarget=unique; return this; }
+        public Builder submit(UiItem target,boolean unique) { return submit(target,unique,null); }
+        public Builder submit(UiItem target,boolean unique,CheckoutSubmitBinding binding) {
+            submitTarget=target; uniqueNativeSubmitTarget=unique; submitBinding=binding; return this;
+        }
         public Builder relatedAttempt(String id) { relatedAttemptId=CheckoutIdentity.clean(id); return this; }
         public Builder pendingOrder(String ref,boolean verified,Long deadline,String text) {
             orderReference=CheckoutIdentity.clean(ref); orderReferenceVerified=verified;

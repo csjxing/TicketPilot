@@ -1,5 +1,9 @@
 # Integration contract
 
+## v0.1.12 user-controlled model capacity
+
+Daily call limit 0 disables the app quota, while durable usage accounting remains. Output limit 0 omits both output-token parameters so the provider decides its default. Existing encrypted settings and keys are preserved, with defaults only for newly added input-character and timeout fields. The actual combined input is validated without silent clipping; response resource bounds remain explicit. Provider limits and billing remain independent. UI changes do not authorize network requests, monitoring or orders.
+
 ## v0.1.11 optional AI assistance
 
 The Android app now declares INTERNET for explicit, opt-in HTTPS Chat Completions requests. Native monitoring, OCR, stock decisions and input remain local and do not depend on AI. The model may propose an editable configuration draft. Only explicit user review and save can persist it, paused and pending a fresh real-app catalog verification. The model cannot dispatch taps, authorize orders or resume monitoring.

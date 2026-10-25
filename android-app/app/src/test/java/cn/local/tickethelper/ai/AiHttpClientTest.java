@@ -33,6 +33,25 @@ public final class AiHttpClientTest {
         assertEquals(1024, legacy.getInt("max_tokens")); assertFalse(legacy.has("max_completion_tokens"));
     }
 
+    @Test public void providerDefaultOmitsBothTokenLimitParameters() throws Exception {
+        for (boolean legacy : new boolean[]{false, true}) {
+            AiSettings value = new AiSettings(true, "https://api.example.com/v1", "fixture-model", 0, 0, legacy);
+            JSONObject body = new JSONObject(new String(AiHttpClient.requestBody(value, "policy", "question"), StandardCharsets.UTF_8));
+            assertFalse(body.has("max_tokens")); assertFalse(body.has("max_completion_tokens"));
+        }
+    }
+
+    @Test public void expandedInputAndOutputAreSentWithoutHiddenOldCaps() throws Exception {
+        AiSettings value = new AiSettings(true, "https://api.example.com/v1", "fixture-model", 131072, 0, false, 262144, 600);
+        String question = "问题".repeat(32000);
+        JSONObject body = new JSONObject(new String(AiHttpClient.requestBody(value, "policy", question), StandardCharsets.UTF_8));
+        assertEquals(question, body.getJSONArray("messages").getJSONObject(1).getString("content"));
+        assertEquals(131072, body.getInt("max_completion_tokens"));
+        AiSettings small = new AiSettings(true, "https://api.example.com/v1", "fixture-model", 8192, 0, false, 2000, 120);
+        try { AiHttpClient.requestBody(small, "policy", question); fail("Input over chosen limit accepted"); }
+        catch (AiHttpClient.Failure expected) { assertTrue(expected.getMessage().contains("未被截短")); }
+    }
+
     @Test public void validTextAndUnknownUsageAreKeptSeparate() throws Exception {
         AiHttpClient.Result result = AiHttpClient.parseResponse(response(message("先核对场次，再检查票档。"), "stop", null), "fixture-key", 12);
         assertEquals("先核对场次，再检查票档。", result.text);
@@ -61,7 +80,7 @@ public final class AiHttpClientTest {
     }
 
     @Test public void malformedAndOversizedResponsesFailWithoutProviderTextInErrors() throws Exception {
-        for (byte[] bytes : new byte[][]{"PRIVATE_PROVIDER_BODY".getBytes(StandardCharsets.UTF_8), new byte[]{(byte) 0xc3, 0x28}, new byte[256 * 1024 + 1]}) {
+        for (byte[] bytes : new byte[][]{"PRIVATE_PROVIDER_BODY".getBytes(StandardCharsets.UTF_8), new byte[]{(byte) 0xc3, 0x28}, new byte[8 * 1024 * 1024 + 1]}) {
             try { AiHttpClient.parseResponse(bytes, "fixture-key", 1); fail("Invalid response accepted"); }
             catch (AiHttpClient.Failure expected) { assertFalse(expected.getMessage().contains("PRIVATE_PROVIDER_BODY")); assertNull(expected.getCause()); }
         }
@@ -69,8 +88,16 @@ public final class AiHttpClientTest {
 
     @Test public void outputLimitIsDisclosedAndStringUsageIsNotTrusted() throws Exception {
         AiHttpClient.Result result = AiHttpClient.parseResponse(response(message("x".repeat(17000)), "length", new JSONObject().put("prompt_tokens", "1000").put("completion_tokens", -1)), "fixture-key", 1);
-        assertTrue(result.text.length() < 16100); assertTrue(result.text.contains("可能未完整"));
+        assertTrue(result.text.startsWith("x".repeat(17000))); assertTrue(result.text.contains("可能未完整"));
         assertEquals(-1, result.promptTokens); assertEquals(-1, result.completionTokens);
+    }
+
+    @Test public void longResponseSurvivesOldTransportAndDisplayCaps() throws Exception {
+        String longText = "长".repeat(120000);
+        assertEquals(longText, AiHttpClient.parseResponse(response(message(longText), "stop", null), "fixture-key", 1).text);
+        AiHttpClient.Result capped = AiHttpClient.parseResponse(response(message("x".repeat(1_048_577)), "stop", null), "fixture-key", 1);
+        assertTrue(capped.text.startsWith("x".repeat(1_048_576))); assertTrue(capped.text.contains("本机显示上限"));
+        assertTrue(capped.text.contains("不会解除此显示上限"));
     }
 
     @Test public void redirectsAndAuthenticationFailuresAreNotFollowedOrExposed() throws Exception {

@@ -342,8 +342,98 @@ public class CheckoutPageParserTest {
         catch (IllegalArgumentException expected) { assertEquals("explicit_package_resource_id_required",expected.getMessage()); }
     }
 
+    @Test public void reviewedNoIdPublicTextNeedsUniqueAnchorExactPathAndWholeLabel() {
+        Fixture f = new Fixture(false);
+        f.anchoredValue(Role.EVENT_TITLE, "title", "identity", "0", "演出：(杭州·合成演唱会-杭州站)");
+        assertEquals(CheckoutParseResult.Status.PARSED, f.parse().status);
+        f.text("identity/0", "推荐演出：杭州·合成演唱会-杭州站");
+        assertNotParsed(f.parse());
+    }
+
+    @Test public void structuralPathNeverFallsBackToNearbyOrChangedNodes() {
+        Fixture moved = new Fixture(false);
+        moved.anchoredValue(Role.EVENT_TITLE, "title", "identity", "0", "演出：(.+)");
+        moved.parent("identity/0", "amounts");
+        assertNotParsed(moved.parse());
+        Fixture changedId = new Fixture(false);
+        changedId.anchoredValue(Role.EVENT_TITLE, "title", "identity", "0", "演出：(.+)");
+        CheckoutFrame.Node n=changedId.node("identity/0"); UiItem old=n.item;
+        changedId.replace(n.key,new CheckoutFrame.Node(n.key,n.parentKey,new UiItem(old.text,old.left,old.top,old.right,old.bottom,
+                old.enabled,old.clickable,old.selected,old.source,id("new_title")),true,false,false,false,7));
+        assertNotParsed(changedId.parse());
+    }
+
+    @Test public void duplicateStructuralAnchorsAreAmbiguousEvenWithOneMatchingValue() {
+        Fixture f = new Fixture(false);
+        f.anchoredValue(Role.EVENT_TITLE, "title", "identity", "0", "演出：(.+)");
+        f.add("other_identity","page","identity","",false,false,false);
+        assertEquals(CheckoutParseResult.Status.AMBIGUOUS, f.parse().status);
+    }
+
+    @Test public void structuralPublicTextCannotReadProtectedAncestor() {
+        Fixture f = new Fixture(false);
+        f.anchoredValue(Role.EVENT_TITLE, "title", "identity", "0", "演出：(.+)");
+        f.sensitive("identity");
+        assertNotParsed(f.parse());
+    }
+
+    @Test public void structuralSelectorIsNotAvailableForIdentityOrActionRoles() {
+        for (Role role : List.of(Role.SUBMIT, Role.AGREEMENT, Role.VIEWER_NAME, Role.VIEWER_DOCUMENT, Role.VIEWER_SELECTION, Role.ORDER_REFERENCE)) {
+            try { new CheckoutProfile.Builder("cn.damai",VERSION,ZONE).field(role,
+                    CheckoutProfile.Selector.anchoredValue(id("scope"),"0","(.+)")); fail("Protected/action structural role accepted"); }
+            catch (IllegalArgumentException expected) { assertEquals("anchored_selector_public_value_only",expected.getMessage()); }
+        }
+        for (String path : List.of("", "../0", "0//1", "-1", "01", "1000", "0/")) {
+            try { CheckoutProfile.Selector.anchoredValue(id("scope"),path,"(.+)"); fail("Invalid path accepted"); }
+            catch (IllegalArgumentException expected) { assertEquals("explicit_child_path_required",expected.getMessage()); }
+        }
+    }
+
+    @Test public void combinedSessionUsesOneNativeValueAndNormalizesObservedDotFormat() {
+        Fixture f = new Fixture(false); f.combinedSession("2026.11.15 19:00");
+        CheckoutParseResult result=f.parse();
+        assertEquals(CheckoutParseResult.Status.PARSED,result.status);
+        assertEquals("2026-11-15",result.observation.date); assertEquals("19:00",result.observation.time);
+        f.text("identity/3","2026-11-15 19:00");
+        assertEquals(CheckoutParseResult.Status.PARSED,f.parse().status);
+    }
+
+    @Test public void combinedSessionDoesNotRepairAmbiguousOrInvalidValues() {
+        for (String value : List.of("2026.11-15 19:00","2026.02.30 19:00","2026.11.15 25:00","11.15 19:00","2026.11.15 19:00 第二场")) {
+            Fixture f=new Fixture(false); f.combinedSession(value); assertNotParsed(f.parse());
+        }
+        Fixture mixed=new Fixture(false); mixed.combinedSession("2026.11.15 19:00");
+        mixed.fields.put(Role.SESSION_DATE,value("date","identity","日期：",""));
+        try { mixed.profile(); fail("Two session sources accepted"); }
+        catch (IllegalArgumentException expected) { assertEquals("choose_one_session_representation",expected.getMessage()); }
+    }
+
+    @Test public void submitLabelMustMatchTheSpecificProfileAndCannotBePayment() {
+        Fixture f=new Fixture(false); f.text("submit","立即提交");
+        assertNotParsed(f.parse());
+        f.fields.put(Role.SUBMIT,new CheckoutProfile.Selector(id("submit"),id("actions"),"立即提交"));
+        assertEquals(CheckoutParseResult.Status.PARSED,f.parse().status);
+        assertEquals("立即提交",f.parse().observation.submitTarget.text);
+        try { new CheckoutProfile.Builder("cn.damai",VERSION,ZONE).field(Role.SUBMIT,
+                new CheckoutProfile.Selector(id("submit"),id("actions"),"立即支付")); fail("Payment action accepted"); }
+        catch (IllegalArgumentException expected) { assertEquals("explicit_submit_label_required",expected.getMessage()); }
+    }
+
     private static CheckoutPageParser.ViewerResolver resolver() {
         return (rows,complete) -> ViewerMatcher.match(PERSON,"1234",rows,complete);
+    }
+    @Test public void structuralSubmitProducesAProfileBindingOnlyAfterExactParsing() {
+        Fixture f=new Fixture(false); f.remove("submit");
+        f.add("actions/0","actions","submit_group","",false,false,false);
+        f.nodes.add(new CheckoutFrame.Node("actions/0/4","actions/0",new UiItem("立即提交",700,2300,1100,2450,true,true,false,UiItem.Source.NODE,""),
+                true,false,false,false,7));
+        f.fields.put(Role.SUBMIT,CheckoutProfile.Selector.anchoredSubmit(id("actions"),"0/4"));
+        CheckoutParseResult result=f.parse();
+        assertEquals(CheckoutParseResult.Status.PARSED,result.status);
+        assertNotNull(result.observation.submitBinding);
+        assertTrue(result.observation.submitBinding.matchesProfile(f.profile()));
+        assertEquals("",result.observation.submitTarget.resourceId);
+        f.text("actions/0/4","立即支付"); assertNotParsed(f.parse());
     }
     private static MonitorConfig config() {
         return new MonitorConfig("合成演唱会","杭州","2026-11-15","19:00",List.of(980),1,980,
@@ -408,6 +498,18 @@ public class CheckoutPageParserTest {
         }
         void addValue(Role role,String key,String scope,String prefix,String val,String suffix) {
             add(key,scope,key,prefix+val+suffix,false,false,false); fields.put(role,value(key,scope,prefix,suffix));
+        }
+        void anchoredValue(Role role,String oldKey,String anchor,String path,String regex) {
+            CheckoutFrame.Node old=node(oldKey); remove(oldKey); UiItem i=old.item;
+            nodes.add(new CheckoutFrame.Node(anchor+"/"+path,anchor,new UiItem(i.text,i.left,i.top,i.right,i.bottom,
+                    i.enabled,i.clickable,i.selected,i.source,""),old.visible,old.checked,old.checkable,old.sensitive,old.windowId));
+            fields.put(role,CheckoutProfile.Selector.anchoredValue(id(anchor),path,regex));
+        }
+        void combinedSession(String text) {
+            fields.remove(Role.SESSION_DATE); fields.remove(Role.SESSION_TIME); remove("date"); remove("time");
+            nodes.add(new CheckoutFrame.Node("identity/3","identity",new UiItem(text,1,100,300,130,true,false,false,UiItem.Source.NODE,""),
+                    true,false,false,false,7));
+            fields.put(Role.SESSION_DATETIME,CheckoutProfile.Selector.anchoredValue(id("identity"),"3","(.+)"));
         }
         void add(String key,String parent,String resource,String text,boolean clickable,boolean checkable,boolean checked) {
             int y=nodes.size()*20+1;

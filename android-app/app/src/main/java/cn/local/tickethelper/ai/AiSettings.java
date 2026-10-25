@@ -7,22 +7,33 @@ import java.util.Locale;
 
 /** User-owned provider configuration. It contains no credential and grants no device action. */
 public final class AiSettings {
-    public static final int MIN_OUTPUT_TOKENS = 128, MAX_OUTPUT_TOKENS = 4096, MAX_DAILY_CALLS = 100;
+    public static final int MIN_OUTPUT_TOKENS = 128, MAX_OUTPUT_TOKENS = 131072, MAX_DAILY_CALLS = 1_000_000;
+    public static final int MIN_INPUT_CHARS = 2000, MAX_INPUT_CHARS = 262144, DEFAULT_INPUT_CHARS = 32768;
+    public static final int MIN_TIMEOUT_SECONDS = 15, MAX_TIMEOUT_SECONDS = 600, DEFAULT_TIMEOUT_SECONDS = 120;
+    public static final int MAX_QUESTION_CHARS = 64000;
     public final boolean enabled, legacyTokenLimit;
     public final String baseUrl, model;
-    public final int maxOutputTokens, dailyCallLimit;
+    public final int maxOutputTokens, dailyCallLimit, maxInputChars, timeoutSeconds;
 
     public AiSettings(boolean enabled, String baseUrl, String model, int maxOutputTokens,
                       int dailyCallLimit, boolean legacyTokenLimit) {
+        this(enabled, baseUrl, model, maxOutputTokens, dailyCallLimit, legacyTokenLimit,
+                DEFAULT_INPUT_CHARS, DEFAULT_TIMEOUT_SECONDS);
+    }
+
+    public AiSettings(boolean enabled, String baseUrl, String model, int maxOutputTokens,
+                      int dailyCallLimit, boolean legacyTokenLimit, int maxInputChars, int timeoutSeconds) {
         this.enabled = enabled;
         this.baseUrl = baseUrl == null ? "" : baseUrl.trim();
         this.model = model == null ? "" : model.trim();
         this.maxOutputTokens = maxOutputTokens;
         this.dailyCallLimit = dailyCallLimit;
         this.legacyTokenLimit = legacyTokenLimit;
+        this.maxInputChars = maxInputChars;
+        this.timeoutSeconds = timeoutSeconds;
     }
 
-    public static AiSettings defaults() { return new AiSettings(false, "", "", 1024, 20, false); }
+    public static AiSettings defaults() { return new AiSettings(false, "", "", 8192, 0, false); }
 
     public List<String> validate() {
         List<String> errors = new ArrayList<>();
@@ -32,11 +43,33 @@ public final class AiSettings {
         }
         if ((enabled || !model.isEmpty()) && !model.matches("[A-Za-z0-9][A-Za-z0-9._:/@+\\-]{0,199}"))
             errors.add("请填写接口支持的模型名，不能包含空格或控制字符。");
-        if (maxOutputTokens < MIN_OUTPUT_TOKENS || maxOutputTokens > MAX_OUTPUT_TOKENS)
-            errors.add("单次输出上限应为 128–4096 token。");
-        if (dailyCallLimit < 1 || dailyCallLimit > MAX_DAILY_CALLS)
-            errors.add("每日调用上限应为 1–100 次。");
+        if (maxOutputTokens != 0 && (maxOutputTokens < MIN_OUTPUT_TOKENS || maxOutputTokens > MAX_OUTPUT_TOKENS))
+            errors.add("单次输出可设为 128–131072 token，填 0 使用服务商默认值。");
+        if (dailyCallLimit < 0 || dailyCallLimit > MAX_DAILY_CALLS)
+            errors.add("每日调用上限可设为 1–1000000 次，填 0 不设本机次数限制。");
+        if (maxInputChars < MIN_INPUT_CHARS || maxInputChars > MAX_INPUT_CHARS)
+            errors.add("单次输入上限应为 2000–262144 个字符，包含问题、系统说明与公开摘要。");
+        if (timeoutSeconds < MIN_TIMEOUT_SECONDS || timeoutSeconds > MAX_TIMEOUT_SECONDS)
+            errors.add("等待时间应为 15–600 秒。");
         return List.copyOf(errors);
+    }
+
+    /** Exact text shown in the preview must fit; never silently trim an accepted request. */
+    public void validateInput(String systemPrompt, String userPrompt) {
+        if (systemPrompt == null || systemPrompt.isEmpty() || userPrompt == null || userPrompt.isEmpty())
+            throw new IllegalArgumentException("发送内容为空，请填写问题或读取页面后再试。");
+        if ((long) systemPrompt.length() + userPrompt.length() > maxInputChars)
+            throw new IllegalArgumentException("本次输入超过设置的 " + maxInputChars + " 个字符；可在 AI 设置中提高上限，或减少问题与上下文。内容未发送，也未被截短。");
+    }
+
+    /** A frozen preview cannot silently use changed credentials or request policy. */
+    public boolean matchesRequestSettings(AiSettings other) {
+        if (other == null || enabled != other.enabled || !model.equals(other.model)
+                || maxOutputTokens != other.maxOutputTokens || dailyCallLimit != other.dailyCallLimit
+                || maxInputChars != other.maxInputChars || timeoutSeconds != other.timeoutSeconds
+                || legacyTokenLimit != other.legacyTokenLimit) return false;
+        try { return endpoint().equals(other.endpoint()); }
+        catch (IllegalArgumentException e) { return false; }
     }
 
     /** Accepts a provider base URL or its complete chat-completions URL. */

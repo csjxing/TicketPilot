@@ -36,6 +36,8 @@ import android.widget.TextView;
 import android.widget.Toast;
 import cn.local.tickethelper.core.MonitorConfig;
 import cn.local.tickethelper.core.HomeStep;
+import cn.local.tickethelper.core.IntervalSeconds;
+import cn.local.tickethelper.core.TaskPreferences;
 import cn.local.tickethelper.checkout.LockAuthorization;
 import cn.local.tickethelper.checkout.OrderAttemptStore;
 import cn.local.tickethelper.checkout.OrderCheckoutAdapter;
@@ -70,10 +72,16 @@ public final class MainActivity extends Activity {
     private boolean unsavedChanges, startAfterDialog;
     private long displayedConfigRevision;
     private LinearLayout taskPage, settingsPage, resourcesPage, shizukuPanel;
+    private final Map<String, LinearLayout> expandablePanels = new LinkedHashMap<>();
+    private final Map<String, Button> expandableButtons = new LinkedHashMap<>();
+    private TextView modeSummary, homeHint;
+    private TextView targetDetails, priceSummary, journeyText, aiHelpTitle;
+    private Button quickModeButton, quickRhythmButton, contextAiButton;
+    private LinearLayout actionDock, aiHelpCard;
     private final List<Button> navigationButtons = new ArrayList<>();
     private ScrollView contentScroll;
     private TextView nextStepText, draftText, accessSummary;
-    private Button pauseButton, saveButton;
+    private Button pauseButton, saveButton, changeTargetButton;
     private int selectedTab;
     private long uiRevision;
     private AlertDialog orderConfirmation;
@@ -97,9 +105,11 @@ public final class MainActivity extends Activity {
         shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         taskPage = column(); settingsPage = column(); resourcesPage = column();
         pages.addView(taskPage); pages.addView(settingsPage); pages.addView(resourcesPage);
+        actionDock = column(); actionDock.setPadding(dp(18), dp(10), dp(18), dp(10));
+        actionDock.setBackgroundColor(CARD); shell.addView(actionDock);
         LinearLayout navigation = row(); navigation.setPadding(dp(10), dp(7), dp(10), dp(7));
         navigation.setBackgroundColor(CARD);
-        String[] tabs = {"任务", "设置", "使用与维护"};
+        String[] tabs = {"抢票", "我的"};
         for (int i = 0; i < tabs.length; i++) {
             final int tab = i;
             Button item = button(tabs[i], false, v -> showTab(tab));
@@ -114,32 +124,55 @@ public final class MainActivity extends Activity {
         setContentView(shell);
         LinearLayout page = taskPage;
 
-        addText(page, "票务助手", 28, TEXT, true, 0);
-        addText(page, "选好演出，再开始关注余票", 14, MUTED, false, 4);
-        addText(settingsPage, "设置", 28, TEXT, true, 0);
-        addText(settingsPage, "每项都显示当前状态，完成后回到任务页。", 14, MUTED, false, 4);
-        addText(resourcesPage, "使用与维护", 28, TEXT, true, 0);
-        addText(resourcesPage, "操作说明和开发资料都在手机里，离线可读。", 14, MUTED, false, 4);
+        addText(page, "TicketPilot", 28, TEXT, true, 0);
+        addText(page, "选好想看的，下一步交给助手", 14, MUTED, false, 4);
+        journeyText = text("① 选演出   →   ② 定条件   →   ③ 开始", 12, ACCENT, true);
+        page.addView(journeyText, spaced(16));
+        addText(settingsPage, "我的", 28, TEXT, true, 0);
+        addText(settingsPage, "手机准备、AI 和使用帮助", 14, MUTED, false, 4);
+        resourcesPage.addView(button("‹ 返回我的", false, v -> showTab(1)));
+        addText(resourcesPage, "帮助与记录", 28, TEXT, true, 16);
+        addText(resourcesPage, "需要时再看，不影响日常选票", 14, MUTED, false, 4);
 
-        LinearLayout intent = card(page, 18);
-        section(intent, "1", "说出你的需求");
-        addText(intent, "用一句话告诉助手：想看谁、哪座城市、什么时间、多少预算。也可以直接进入下一步。", 14, MUTED, false, 10);
-        intent.addView(button("告诉助手想看什么", true, v -> openAiAssistant()), spaced(14));
+        LinearLayout live = card(page, 18);
+        stateBadge = text("还未开始", 12, ACCENT, true); live.addView(stateBadge);
+        targetSummary = text("", 21, TEXT, true); targetSummary.setMaxLines(3);
+        targetSummary.setEllipsize(android.text.TextUtils.TruncateAt.END); live.addView(targetSummary, spaced(12));
+        targetDetails = text("", 14, MUTED, false); live.addView(targetDetails, spaced(8));
+        priceSummary = text("", 20, ACCENT, true); live.addView(priceSummary, spaced(12));
+        modeSummary = text("", 12, MUTED, false); live.addView(modeSummary, spaced(6));
+        changeTargetButton = button("更换演出、场次或票价  ›", false, v -> openCatalog());
+        live.addView(changeTargetButton, spaced(12));
 
-        LinearLayout live = card(page, 14);
-        page.removeView(live);
-        section(live, "3", "核对并开始");
-        stateBadge = text("未启动", 12, ACCENT, true);
-        live.addView(stateBadge);
-        nextStepText = text("", 20, TEXT, true); live.addView(nextStepText, spaced(10));
-        statusText = text("", 13, MUTED, false);
-        live.addView(statusText, spaced(10));
+        LinearLayout choices = card(page, 12);
+        addText(choices, "按你的方式", 15, TEXT, true, 0);
+        quickModeButton = button("有票后怎么做  ›", false, v -> showModeSheet());
+        quickModeButton.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        choices.addView(quickModeButton, spaced(10));
+        quickRhythmButton = button("检查速度  ›", false, v -> showRhythmSheet());
+        quickRhythmButton.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        choices.addView(quickRhythmButton, spaced(8));
+
+        LinearLayout next = card(page, 12);
+        page.removeView(next); page.addView(next, page.indexOfChild(live) + 1);
+        nextStepText = text("", 16, TEXT, true); next.addView(nextStepText);
+        homeHint = text("", 13, MUTED, false); next.addView(homeHint, spaced(6));
         directStartButton = button("选择演出", true, v -> homePrimaryAction());
-        live.addView(directStartButton, spaced(14));
-        addText(live, "监控时保持屏幕亮着，并停留在大麦。", 12, MUTED, false, 10);
+        actionDock.addView(directStartButton);
+        pauseButton = button("暂停", true, v -> pauseMonitoring()); actionDock.addView(pauseButton);
+        draftText = text("", 12, ACCENT, true); actionDock.addView(draftText, spaced(6));
 
-        LinearLayout access = card(settingsPage, 18);
-        section(access, "1", "让助手能读取页面、提醒你");
+        aiHelpCard = next;
+        aiHelpTitle = text("AI 帮你少想一步", 12, ACCENT, true); aiHelpCard.addView(aiHelpTitle, spaced(12));
+        contextAiButton = button("说说你想看什么", false, v -> openContextAi());
+        aiHelpCard.addView(contextAiButton, spaced(9));
+        LinearLayout details = expandable(page, "运行详情", "连接状态和最近的处理结果", false);
+        statusText = text("", 13, MUTED, false); details.addView(statusText);
+        accessSummary = text("", 13, MUTED, false); details.addView(accessSummary, spaced(10));
+        details.addView(button("打开大麦", false, v -> openDamai()), spaced(10));
+        details.addView(button("检查手机设置", false, v -> openSetup()), spaced(10));
+
+        LinearLayout access = expandable(settingsPage, "手机准备", "读取页面、通知与点击服务", false);
         permissionText = text("", 13, MUTED, false);
         access.addView(permissionText, spaced(12));
         addText(access, "只开启“票务助手 · 界面读取”，不需要开启 TalkBack。", 13, MUTED, false, 8);
@@ -151,7 +184,7 @@ public final class MainActivity extends Activity {
         access.addView(button("看权限设置步骤", false, v -> openGuide("permissions")), spaced(8));
         access.addView(button("打开大麦，确认已登录", false, v -> openDamai()), spaced(8));
 
-        addText(access, "2  /  选择点击方式", 16, TEXT, true, 20);
+        addText(access, "点击方式", 16, TEXT, true, 20);
         RadioGroup inputModes = new RadioGroup(this);
         inputModes.setOrientation(RadioGroup.VERTICAL);
         RadioButton accessibilityInput = radio("标准触控（无障碍）", AppStore.INPUT_ACCESSIBILITY);
@@ -175,15 +208,12 @@ public final class MainActivity extends Activity {
         shizukuButtons.addView(shizukuPermissionButton, spaced(8));
         shizukuButtons.addView(shizukuConnectButton, spaced(8));
         shizukuPanel.addView(shizukuButtons);
-        addText(shizukuPanel, "完成后回到“任务”。连接成功不会自动开始监控。", 12, MUTED, false, 8);
+        addText(shizukuPanel, "完成后回到“购票”，再点开始。", 12, MUTED, false, 8);
 
-        LinearLayout config = card(page, 14);
-        section(config, "2", "选择演出和场次");
-        targetSummary = text("", 14, TEXT, false);
-        config.addView(targetSummary, spaced(12));
-        config.addView(button("从大麦选择演出和场次", false, v -> openCatalog()), spaced(14));
-        LinearLayout manual = card(settingsPage, 14);
-        addText(manual, "手动调整目标（高级）", 17, TEXT, true, 0);
+        LinearLayout moreSettings = expandable(settingsPage, "更多设置", "手动填写、检查参数和购票方式", false);
+        LinearLayout manual = card(moreSettings, 0);
+        addText(manual, "手动修改演出", 17, TEXT, true, 0);
+        addText(manual, "通常只需在购票页点选演出和票价。", 12, MUTED, false, 6);
         advancedTargetButton = button("手动修改目标 ▾", false, v -> setAdvancedExpanded(!advancedExpanded));
         manual.addView(advancedTargetButton, spaced(10));
         advancedTargetFields = column();
@@ -195,30 +225,33 @@ public final class MainActivity extends Activity {
         field(advancedTargetFields, "maxTotal", "订单实付上限（元，含全部费用）", "填写最高可接受的订单总额", true);
         field(advancedTargetFields, "deadline", "什么时候停止（北京时间）", "点击选择日期与时间", false);
         setupDateTimePickers();
-        addText(advancedTargetFields, "修改后点“保存修改”，或直接开始时保存。金额以元为单位。", 12, MUTED, false, 8);
+        addText(advancedTargetFields, "修改后点“保存设置”，或开始时核对保存。", 12, MUTED, false, 8);
         setAdvancedExpanded(false);
 
-        LinearLayout rhythm = card(settingsPage, 14);
-        section(rhythm, "3", "检查节奏");
-        rhythm.addView(button("使用常用节奏 · 5–10 秒", false, v -> setRhythm(5, 10)), spaced(10));
-        rhythm.addView(button("使用较缓节奏 · 10–20 秒", false, v -> setRhythm(10, 20)), spaced(8));
-        paired(rhythm, "minSeconds", "最短间隔（秒）", "5", true,
-                "maxSeconds", "最长间隔（秒）", "10", true);
-        addText(rhythm, "在区间内动态等待，最短 3 秒。页面加载和识别另计；不会绕过验证码或平台限制。", 12, MUTED, false, 8);
+        LinearLayout rhythm = expandable(moreSettings, "检查频率", "在设定的时间区间内自动检查", false);
+        rhythm.addView(button("快速 · 0.5–1.5 秒", false, v -> setRhythm("0.5", "1.5")), spaced(10));
+        rhythm.addView(button("常用 · 1–3 秒", false, v -> setRhythm("1", "3")), spaced(8));
+        rhythm.addView(button("稳健 · 5–10 秒", false, v -> setRhythm("5", "10")), spaced(8));
+        paired(rhythm, "minSeconds", "最短间隔（秒）", "0.5", true,
+                "maxSeconds", "最长间隔（秒）", "1.5", true);
+        fields.get("minSeconds").setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        fields.get("maxSeconds").setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+        addText(rhythm, "每次操作后，在这个区间随机等待。最快可设 0.5 秒；读取、识别和页面加载还需时间，实际操作不会固定每 0.5 秒发生。", 12, MUTED, false, 8);
+        addText(rhythm, "普通检查不调用模型。更快可能增加手机负担，遇到验证或异常仍会暂停。", 12, MUTED, false, 8);
 
-        LinearLayout behavior = card(settingsPage, 14);
-        section(behavior, "2", "发现有票后做什么");
+        LinearLayout behavior = expandable(moreSettings, "有票后怎么做", "只提醒，或帮你选票到确认页", false);
         behaviorModes = new RadioGroup(this);
         behaviorModes.setOrientation(RadioGroup.VERTICAL);
         alertMode = radio("提醒我，由我继续操作", "ALERT");
         prepareMode = radio("帮我选票，到确认页停下", "PREPARE");
-        lockMode = radio("自动锁单 · 当前未开放", "LOCK_ORDER");
+        lockMode = radio(OrderCheckoutAdapter.isLiveVerified() ? "提交订单，等待我付款"
+                : "提交订单，等待我付款（适配未完成）", "LOCK_ORDER");
         behaviorModes.addView(alertMode);
         behaviorModes.addView(prepareMode);
         behaviorModes.addView(lockMode);
         behavior.addView(behaviorModes, spaced(10));
         lockMode.setEnabled(OrderCheckoutAdapter.isLiveVerified());
-        lockMode.setVisibility(OrderCheckoutAdapter.isLiveVerified() ? View.VISIBLE : View.GONE);
+        lockMode.setVisibility(View.VISIBLE);
         addText(behavior, "到确认页后仍需你提交订单。看到票档或选票成功，都不等于锁票。", 13, MUTED, false, 6);
         behavior.addView(button("了解当前能做什么", false, v -> openGuide("capabilities")), spaced(10));
         orderCapabilityText = text("", 13, ACCENT, true); behavior.addView(orderCapabilityText, spaced(10));
@@ -233,48 +266,39 @@ public final class MainActivity extends Activity {
         addText(viewerFields, "先在真实大麦完成实名添加。此处只保存姓名及可选尾号用于核对，不填写或保存完整证件号，不写入通知和检查记录。同名或显示不完整时交由你处理。", 12, MUTED, false, 8);
         orderBarrierText = text("", 13, ACCENT, false); behavior.addView(orderBarrierText, spaced(12));
 
-        page.addView(live, spaced(14));
-        draftText = text("", 13, ACCENT, true); live.addView(draftText, spaced(14));
-        saveButton = button("保存设置与目标", true, v -> saveOnly());
-        LinearLayout ready = column(); live.addView(ready, spaced(14));
-        accessSummary = text("", 13, MUTED, false); ready.addView(accessSummary);
-        ready.addView(button("查看设置", false, v -> showTab(1)), spaced(10));
-        pauseButton = button("暂停监控", false, v -> pauseMonitoring());
-        live.addView(pauseButton, spaced(10));
+        saveButton = button("保存设置", true, v -> saveOnly());
 
         LinearLayout ai = card(settingsPage, 14);
-        addText(ai, "AI 辅助（选用）", 18, TEXT, true, 0);
-        addText(ai, "自己配置模型和密钥；预览后发送，帮助理解配置、场次、票档和异常。普通轮询仍在本机完成。", 13, MUTED, false, 8);
-        ai.addView(button("配置 AI 与学习笔记", false, v -> openAiAssistant()), spaced(12));
+        addText(ai, "AI 模型", 18, TEXT, true, 0);
+        addText(ai, "接口、密钥和用量由你管理。", 13, MUTED, false, 8);
+        ai.addView(button("管理模型", false, v -> openAiSettings()), spaced(12));
+        settingsPage.removeView(ai); settingsPage.addView(ai, 2);
 
         settingsPage.addView(saveButton, spaced(16));
-        settingsPage.addView(button("回到任务", false, v -> showTab(0)), spaced(10));
+        settingsPage.addView(button("帮助与记录  ›", false, v -> showTab(2)), spaced(14));
+        settingsPage.addView(button("回到抢票", false, v -> showTab(0)), spaced(10));
 
         LinearLayout guide = card(resourcesPage, 18);
         addText(guide, "随时查，不用重新问一遍", 19, TEXT, true, 0);
         addText(guide, "从第一次使用到异常处理，按关键词搜索。", 14, MUTED, false, 8);
         guide.addView(button("打开离线使用指南", true, v -> openGuide(null)), spaced(14));
         guide.addView(button("遇到问题 · 查看排查步骤", false, v -> openGuide("troubleshooting")), spaced(8));
-        LinearLayout local = card(resourcesPage, 14);
-        addText(local, "这台手机单独运行", 19, TEXT, true, 0);
+        LinearLayout local = expandable(resourcesPage, "手机单独使用", "不带电脑时如何准备", false);
         addText(local, "日常读取、判断和点击由手机执行。电脑用于维护；脱离电脑的完整选票流程仍待实测。", 14, MUTED, false, 8);
         local.addView(button("查看单机使用步骤", false, v -> openGuide("move-phone")), spaced(14));
-        LinearLayout transfer = card(resourcesPage, 14);
-        addText(transfer, "换电脑继续开发", 19, TEXT, true, 0);
+        LinearLayout transfer = expandable(resourcesPage, "电脑接手与备份", "源代码、说明与开发进度", false);
         addText(transfer, "把当前工程、知识库和接手说明交给 Codex 等工具。连接的仍是这台 vivo，不需要更换手机。", 14, MUTED, false, 8);
         transfer.addView(button("电脑接手与备份", true, v -> openTransfer()), spaced(14));
         transfer.addView(button("开发进展与后续交接", false, v -> openGuide("developer-handoff")), spaced(8));
-        LinearLayout records = card(resourcesPage, 14);
-        addText(records, "检查记录", 18, TEXT, true, 0);
+        LinearLayout records = expandable(resourcesPage, "检查记录", "查看结果，或导出排查问题", false);
         historyText = text("", 13, MUTED, false); records.addView(historyText, spaced(10));
         records.addView(button("导出检查记录", false, v -> exportHistory()), spaced(10));
-        LinearLayout alternate = card(resourcesPage, 14);
-        addText(alternate, "其他启动方式", 16, TEXT, true, 0);
+        LinearLayout alternate = expandable(resourcesPage, "通知启动", "备用入口，通常无需使用", false);
         startButton = button("通过通知启动（备用）", false, v -> startMonitoring());
         alternate.addView(startButton, spaced(10));
         preparedHelp = text("备用入口仅用于提醒或到确认页暂停：打开目标票档后，下拉通知点“开始监控”。通知正文只打开助手，不授权自动下单。", 12, MUTED, false);
         alternate.addView(preparedHelp, spaced(8));
-        addText(resourcesPage, "v0.1.10 体验版 · 独立辅助工具\n日常检查与知识库均在本机运行。", 12, MUTED, false, 20);
+        addText(resourcesPage, "TicketPilot 体验版 · 日常检查在手机本地运行", 12, MUTED, false, 20);
         restoreConfig(store.loadConfig());
         boolean applied = getIntent().getBooleanExtra(CatalogActivity.EXTRA_APPLIED, false);
         if (state != null && !applied && state.getLong("draftConfigRevision", -1) == displayedConfigRevision) {
@@ -291,6 +315,8 @@ public final class MainActivity extends Activity {
         showTab(applied || getIntent().getBooleanExtra("show_task", false) || state == null
                 ? 0 : state.getInt("selectedTab", 0));
         getIntent().removeExtra("show_task");
+        if (state != null) for (String key : expandablePanels.keySet())
+            setPanelExpanded(key, state.getBoolean("panel:" + key, false));
         refreshStatus();
     }
 
@@ -313,8 +339,9 @@ public final class MainActivity extends Activity {
         taskPage.setVisibility(selectedTab == 0 ? View.VISIBLE : View.GONE);
         settingsPage.setVisibility(selectedTab == 1 ? View.VISIBLE : View.GONE);
         resourcesPage.setVisibility(selectedTab == 2 ? View.VISIBLE : View.GONE);
+        actionDock.setVisibility(selectedTab == 0 ? View.VISIBLE : View.GONE);
         for (int i = 0; i < navigationButtons.size(); i++) {
-            Button b = navigationButtons.get(i); boolean active = selectedTab == i;
+            Button b = navigationButtons.get(i); boolean active = (selectedTab == 2 ? 1 : selectedTab) == i;
             b.setSelected(active); b.setTextColor(active ? ACCENT : MUTED);
             b.setBackground(shape(active ? Color.rgb(231, 243, 239) : CARD, active ? ACCENT : CARD, 12));
             b.setContentDescription(b.getText() + (active ? "，当前页面" : ""));
@@ -355,7 +382,7 @@ public final class MainActivity extends Activity {
                         .setMessage("可能是演出或停止时间已过，或目标信息不完整。重新选择可以自动填入日期、票价和停止时间。")
                         .setNegativeButton("手动修改", (d, w) -> { showTab(1); setAdvancedExpanded(true); })
                         .setPositiveButton("重新选择演出", (d, w) -> openCatalog()).show(); break;
-            case SETUP: showTab(1); break;
+            case SETUP: openSetup(); break;
             case CHANGE_MODE:
                 new AlertDialog.Builder(this).setTitle("选择当前可用的方式")
                         .setItems(new String[]{"提醒我，由我继续操作", "帮我选票，到确认页停下"},
@@ -368,8 +395,8 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private void setRhythm(int min, int max) {
-        put("minSeconds", String.valueOf(min)); put("maxSeconds", String.valueOf(max));
+    private void setRhythm(String min, String max) {
+        put("minSeconds", min); put("maxSeconds", max);
         toast("已选择 " + min + "–" + max + " 秒，记得保存"); refreshStatus();
     }
 
@@ -415,6 +442,7 @@ public final class MainActivity extends Activity {
 
     private void setAdvancedExpanded(boolean expanded) {
         advancedExpanded = expanded;
+        if (expanded) setPanelExpanded("更多设置", true);
         advancedTargetFields.setVisibility(expanded ? View.VISIBLE : View.GONE);
         advancedTargetButton.setText(expanded ? "收起手动修改 ▴" : "手动修改目标 ▾");
     }
@@ -422,7 +450,7 @@ public final class MainActivity extends Activity {
     private void openCatalog() {
         if (MonitorService.instance == null || !notificationsEnabled()
                 || (AppStore.INPUT_SHIZUKU.equals(store.getInputMode()) && !ShizukuInputBridge.get(this).isReady())) {
-            showTab(1); toast("先完成页面读取、通知和点击方式设置，再选择演出。"); return;
+            openSetup(); toast("先完成手机准备，就能从大麦选择演出。"); return;
         }
         pauseForInputSettings("正在选择演出；选好后回到任务页开始。");
         refreshStatus();
@@ -433,19 +461,20 @@ public final class MainActivity extends Activity {
     private void refreshTargetSummary() {
         MonitorConfig config = store.loadConfig();
         if (config.eventKeyword.isEmpty()) {
-            targetSummary.setText("尚未选择演出\n选择后会显示项目、场次、票价与停止时间。"); return;
+            targetSummary.setText("今天想看谁的演出？");
+            targetDetails.setText("从大麦选演出、场次和票价，自动带回这里。");
+            priceSummary.setVisibility(View.GONE); return;
         }
         String fullTitle = CatalogActivity.selectedTitle(this, config);
         StringBuilder prices = new StringBuilder();
         for (Integer price : config.prices) { if (prices.length() > 0) prices.append(" / "); prices.append(price); }
-        String deadline = config.deadline == null ? "未设置" : config.deadline.atZone(ZoneId.of("Asia/Shanghai"))
-                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")) + "（北京时间）";
-        targetSummary.setText((store.isImportedTargetPendingReview() ? "目标草稿 · 请到大麦重新选择核对\n" : "")
-                + (fullTitle.isEmpty() ? config.eventKeyword : fullTitle)
-                + "\n" + config.city + " · " + config.date + " " + config.time
-                + "\n接受票价：" + (prices.length() == 0 ? "未设置" : prices + " 元")
-                + "\n" + config.quantity + " 张 · 总额不超过 " + config.maxTotal + " 元"
-                + "\n停止时间：" + deadline);
+        String date = config.date;
+        try { date = java.time.LocalDate.parse(config.date).format(DateTimeFormatter.ofPattern("yyyy年M月d日 EEEE", java.util.Locale.CHINA)); }
+        catch (RuntimeException ignored) { }
+        targetSummary.setText(fullTitle.isEmpty() ? config.eventKeyword : fullTitle);
+        targetDetails.setText(config.city + " · " + date + " " + config.time);
+        priceSummary.setVisibility(View.VISIBLE);
+        priceSummary.setText(prices.length() == 0 ? "还没选票价" : "¥" + prices + "  ·  " + config.quantity + " 张");
     }
 
     private void restoreConfig(MonitorConfig config) {
@@ -458,8 +487,8 @@ public final class MainActivity extends Activity {
         put("maxTotal", config.maxTotal > 0 ? String.valueOf(config.maxTotal) : "");
         put("deadline", config.deadline == null ? "" : config.deadline.atZone(ZoneId.of("Asia/Shanghai"))
                 .format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")));
-        put("minSeconds", String.valueOf(config.minIntervalMs / 1000));
-        put("maxSeconds", String.valueOf(config.maxIntervalMs / 1000));
+        put("minSeconds", IntervalSeconds.format(config.minIntervalMs));
+        put("maxSeconds", IntervalSeconds.format(config.maxIntervalMs));
         viewerName.setText(store.getViewerDisplayName());
         viewerSuffix.setText(store.getViewerDocumentSuffix());
         restoreMode(config.mode.name());
@@ -495,11 +524,21 @@ public final class MainActivity extends Activity {
     private void invalidateEditedConfig() {
         if (restoringFields) return;
         uiRevision++;
+        boolean firstEdit = !unsavedChanges;
         unsavedChanges = true;
-        pauseForInputSettings("有修改尚未保存。开始前会先保存并核对。");
+        if (firstEdit) pauseForInputSettings("有修改尚未保存。开始前会先保存并核对。");
     }
 
     private MonitorConfig readConfig() {
+        final long minInterval, maxInterval;
+        try {
+            minInterval = IntervalSeconds.parse(value("minSeconds"));
+            maxInterval = IntervalSeconds.parse(value("maxSeconds"));
+            if (maxInterval < minInterval) throw new IllegalArgumentException("最长间隔不能小于最短间隔。");
+        } catch (IllegalArgumentException invalid) {
+            showTab(1); setPanelExpanded("检查频率", true);
+            showMessage("请检查操作间隔", invalid.getMessage()); return null;
+        }
         try {
             LinkedHashSet<Integer> values = new LinkedHashSet<>();
             for (String part : value("prices").split("[,，、\\s]+")) {
@@ -508,8 +547,7 @@ public final class MainActivity extends Activity {
             Instant deadline = parseDeadline(value("deadline"));
             MonitorConfig config = new MonitorConfig(value("event"), value("city"), value("date"), value("time"),
                     new ArrayList<>(values), Integer.parseInt(value("quantity")), Integer.parseInt(value("maxTotal")), deadline,
-                    Math.multiplyExact(Long.parseLong(value("minSeconds")), 1000),
-                    Math.multiplyExact(Long.parseLong(value("maxSeconds")), 1000),
+                    minInterval, maxInterval,
                     selectedMode());
             List<String> problems = new ArrayList<>(config.validate());
             if (!deadline.isAfter(Instant.now())) problems.add("停止时间需要晚于当前时间。");
@@ -519,7 +557,7 @@ public final class MainActivity extends Activity {
             return config;
         } catch (Exception e) {
             showTab(1); setAdvancedExpanded(true);
-            showMessage("请补全目标", "推荐先点“选择 / 更换演出”自动填写。手动修改时，票价、金额和间隔使用整数；日期与时间点选即可。");
+            showMessage("请补全目标", "推荐先点“选择 / 更换演出”自动填写。手动修改时，票价和金额使用整数；间隔可填 0.5–600 秒，最多精确到 0.001 秒。日期与时间点选即可。");
             return null;
         }
     }
@@ -876,12 +914,19 @@ public final class MainActivity extends Activity {
         refreshTargetSummary();
         MonitorService service = MonitorService.instance;
         boolean running = service != null && service.isRunning();
-        stateBadge.setText(running ? "正在监控" : "尚未运行");
-        stateBadge.setTextColor(running ? ACCENT : MUTED);
-        statusText.setText(service == null && store.isArmed()
-                ? "无障碍连接已断开，当前未运行。请重新开启后手动开始。" : store.getStatus());
+        String currentStatus = service == null && store.isArmed()
+                ? "无障碍连接已断开，当前未运行。请重新开启后手动开始。" : store.getStatus();
+        // This is bounded, user-facing service text, never the raw decision code or node dump.
+        if (currentStatus == null) currentStatus = "";
+        if (currentStatus.length() > 240) currentStatus = currentStatus.substring(0, 240);
+        boolean paused = !running && isPausedStatus(currentStatus);
+        boolean waitingForDamai = running && service.isWaitingForDamai();
+        stateBadge.setText(waitingForDamai ? "等待切回大麦" : running ? "正在检查页面" : paused ? "已暂停" : "还未开始");
+        stateBadge.setTextColor(running || paused ? ACCENT : MUTED);
+        statusText.setText(currentStatus);
         historyText.setText(getString(R.string.history_summary, store.historyCount(), store.lastEventSummary()));
         boolean notifications = notificationsEnabled();
+        boolean damai = getPackageManager().getLaunchIntentForPackage("cn.damai") != null;
         permissionText.setText(getString(R.string.permission_summary, service != null ? "已连接" : "待开启", notifications ? "已允许" : "待允许"));
         boolean shizukuMode = AppStore.INPUT_SHIZUKU.equals(store.getInputMode());
         inputStatusText.setText(shizukuMode ? ShizukuInputBridge.get(this).status()
@@ -895,20 +940,50 @@ public final class MainActivity extends Activity {
         startButton.setAlpha(running ? 0.55f : 1f);
         boolean lock = lockMode.isChecked();
         boolean clear = orderBarrierClear();
-        orderCapabilityText.setVisibility(lock ? View.VISIBLE : View.GONE);
+        orderCapabilityText.setVisibility(lock || !OrderCheckoutAdapter.isLiveVerified() ? View.VISIBLE : View.GONE);
         orderCapabilityText.setText(OrderCheckoutAdapter.isLiveVerified()
                 ? "自动下单需逐次核对当前目标和观演人；仅官方待付款订单确认后才报告成功。"
-                : "自动下单未开放：真实确认页和待付款页适配尚未验收。可保存配置，当前使用“帮我选票，到确认页停下”。");
+                : "提交订单功能正在适配，当前不可选。现在可选票到确认页，最终提交订单和付款由你完成。");
         startButton.setVisibility(lock ? View.GONE : View.VISIBLE);
         preparedHelp.setVisibility(lock ? View.GONE : View.VISIBLE);
-        HomeStep step = homeStep(); nextStepText.setText(step.title);
+        HomeStep step = homeStep();
+        nextStepText.setText(waitingForDamai ? "现在切回大麦" : paused && step == HomeStep.READY ? "需要你处理一下" : homeTitle(step));
+        boolean clickReady = !shizukuMode || ShizukuInputBridge.get(this).isReady();
+        if (step == HomeStep.SETUP) {
+            nextStepText.setText(service == null ? "先允许读取大麦页面" : !notifications ? "先开启提醒通知"
+                    : !damai ? "先安装官方大麦" : !clickReady ? "连接手机点击服务" : "检查手机准备情况");
+            java.util.List<String> missing = new java.util.ArrayList<>();
+            if (service == null) missing.add("页面读取未连接");
+            if (!notifications) missing.add("通知未允许");
+            if (!damai) missing.add("未安装大麦");
+            if (!clickReady) missing.add("点击服务未连接");
+            homeHint.setText(String.join(" · ", missing) + "。点下方按钮，一步步完成。");
+            homeHint.setOnClickListener(null);
+        } else {
+            homeHint.setText(waitingForDamai ? "请在 " + service.waitingForDamaiSeconds() + " 秒内用最近任务切回目标票档页，保持屏幕亮着。"
+                    : !currentStatus.isEmpty() ? currentStatus : homeHint(step));
+            final String visibleStatus = currentStatus;
+            homeHint.setOnClickListener(!running && !currentStatus.isEmpty()
+                    ? v -> showMessage("当前状态", visibleStatus) : null);
+        }
+        homeHint.setMaxLines(4); homeHint.setEllipsize(android.text.TextUtils.TruncateAt.END);
+        MonitorConfig saved = store.loadConfig();
+        modeSummary.setText(saved.maxTotal > 0 ? "实付上限 ¥" + saved.maxTotal + " · 付款由你完成" : "");
+        modeSummary.setVisibility(saved.maxTotal > 0 ? View.VISIBLE : View.GONE);
+        quickModeButton.setText("有票后    " + modeLabel(saved.mode) + "  ›");
+        quickRhythmButton.setText("检查速度    " + IntervalSeconds.format(saved.minIntervalMs) + "–"
+                + IntervalSeconds.format(saved.maxIntervalMs) + " 秒  ›");
+        journeyText.setText(saved.eventKeyword.isEmpty() ? "① 选演出   →   ② 定条件   →   ③ 开始"
+                : running ? "✓ 已选演出   →   ✓ 已定条件   →   ● 运行中" : "✓ 已选演出   →   ② 定条件   →   ③ 开始");
+        aiHelpTitle.setText(paused ? "卡住了？AI 帮你看原因" : saved.eventKeyword.isEmpty() ? "还没想好怎么选？" : "AI 帮你核对这份计划");
+        contextAiButton.setText(running ? "暂停并让 AI 分析" : paused ? "分析这次暂停" : saved.eventKeyword.isEmpty() ? "一句话整理购票需求" : "帮我看看场次和预算");
+        changeTargetButton.setVisibility(saved.eventKeyword.isEmpty() ? View.GONE : View.VISIBLE);
         directStartButton.setText(step.button); directStartButton.setEnabled(true); directStartButton.setAlpha(1f);
         directStartButton.setVisibility(running ? View.GONE : View.VISIBLE);
         pauseButton.setVisibility(running ? View.VISIBLE : View.GONE);
         draftText.setVisibility(unsavedChanges ? View.VISIBLE : View.GONE);
-        draftText.setText("有修改未保存。上方目标摘要仍显示已保存的内容。");
+        draftText.setText("有修改未保存，开始前会核对。");
         saveButton.setVisibility(unsavedChanges ? View.VISIBLE : View.GONE);
-        boolean damai = getPackageManager().getLaunchIntentForPackage("cn.damai") != null;
         accessSummary.setText("大麦 " + (damai ? "已安装" : "待安装")
                 + "  ·  页面读取 " + (service != null ? "已连接" : "待开启")
                 + "\n通知 " + (notifications ? "已允许" : "待允许")
@@ -942,7 +1017,234 @@ public final class MainActivity extends Activity {
         state.putBoolean("unsavedChanges", unsavedChanges);
         state.putInt("selectedTab", selectedTab);
         state.putLong("draftConfigRevision", displayedConfigRevision);
+        for (String key : expandablePanels.keySet()) state.putBoolean("panel:" + key, expandablePanels.get(key).getVisibility() == View.VISIBLE);
         super.onSaveInstanceState(state);
+    }
+
+    private void openSetup() {
+        LinearLayout content = sheetContent();
+        boolean pageReady = MonitorService.instance != null;
+        boolean alertsReady = notificationsEnabled();
+        boolean damaiReady = getPackageManager().getLaunchIntentForPackage("cn.damai") != null;
+        boolean shizuku = AppStore.INPUT_SHIZUKU.equals(store.getInputMode());
+        boolean clickReady = shizuku ? ShizukuInputBridge.get(this).isReady() : pageReady;
+        addText(content, "按下方提示完成一次设置，之后直接选票。", 14, MUTED, false, 0);
+        if (pageReady) addText(content, "✓ 已能读取大麦页面", 14, ACCENT, true, 14);
+        else content.addView(button("1. 允许读取大麦页面", true, v -> showAccessibilityDisclosure()), spaced(14));
+        if (alertsReady) addText(content, "✓ 已允许消息提醒", 14, ACCENT, true, 12);
+        else content.addView(button("允许有票和异常提醒", false, v -> requestNotifications()), spaced(12));
+        if (!damaiReady) addText(content, "请先在手机安装官方大麦。", 14, TEXT, false, 12);
+        if (clickReady) addText(content, "✓ 点击服务已就绪", 14, ACCENT, true, 12);
+        else if (shizuku) content.addView(button("连接点击服务", false, null), spaced(12));
+        content.addView(button("AI 帮我看设置问题", false, v -> openAiContext("异常分析", "手机准备",
+                "请解释当前手机准备还缺哪些条件，并用我能直接照做的短步骤说明。没有现场证据的状态请说未知。")), spaced(14));
+        AlertDialog dialog = showSheet("准备好这台手机", content, "完成，返回", null);
+        // A settings screen must remain reachable, not hidden behind this sheet on return.
+        for (int i = 0; i < content.getChildCount(); i++) {
+            View child = content.getChildAt(i);
+            if (!(child instanceof Button)) continue;
+            String label = ((Button) child).getText().toString();
+            if ("连接点击服务".equals(label)) child.setOnClickListener(v -> {
+                dialog.dismiss(); showTab(1); setPanelExpanded("手机准备", true);
+            });
+            else if ("1. 允许读取大麦页面".equals(label)) child.setOnClickListener(v -> {
+                dialog.dismiss(); showAccessibilityDisclosure();
+            });
+            else if ("允许有票和异常提醒".equals(label)) child.setOnClickListener(v -> {
+                dialog.dismiss(); requestNotifications();
+            });
+            else if ("AI 帮我看设置问题".equals(label)) child.setOnClickListener(v -> {
+                dialog.dismiss(); openAiContext("异常分析", "手机准备", "请解释当前手机准备还缺哪些条件，并用我能直接照做的短步骤说明。没有现场证据的状态请说未知。");
+            });
+        }
+    }
+
+    @Override public void onBackPressed() {
+        if (selectedTab != 0) showTab(selectedTab == 2 ? 1 : 0); else super.onBackPressed();
+    }
+
+    private void openAiSettings() {
+        pauseForInputSettings("正在设置 AI；监控保持暂停。");
+        startActivity(new Intent(this, AiAssistantActivity.class).putExtra("screen", "settings").putExtra("origin_label", "我的"));
+    }
+
+    private boolean isPausedStatus(String status) {
+        return status.contains("暂停") || status.contains("停止") || status.contains("断开")
+                || status.contains("重新开始")
+                || status.contains("已中断") || status.startsWith("已检测到订单相关页面")
+                || status.startsWith("发现目标票档的有票信号") || status.startsWith("大麦已确认待付款订单")
+                || status.startsWith("大麦显示匹配的待付款订单") || status.startsWith("存在历史订单提交记录")
+                || status.startsWith("订单提交结果无法确认");
+    }
+
+    private String homeTitle(HomeStep step) {
+        switch (step) {
+            case RUNNING: return "正在检查，发现变化会提醒你";
+            case SELECT: return "先选好演出和场次";
+            case REVIEW_IMPORTED: return "这份草稿还需要核对";
+            case REPAIR_TARGET: return "请更新演出信息";
+            case SETUP: return "还差一步：准备好手机";
+            case CHANGE_MODE: return "请选择一种购票方式";
+            case SAVE_AND_START: return "保存修改后就能开始";
+            default: return "准备好了";
+        }
+    }
+
+    private String homeHint(HomeStep step) {
+        switch (step) {
+            case RUNNING: return "切回大麦，保持屏幕亮着。你可以随时暂停。";
+            case SELECT: return "选中票价后，回来点开始。";
+            case REVIEW_IMPORTED: return "从大麦重新点选场次和票价，再开始。";
+            case REPAIR_TARGET: return "日期已过或信息不完整，重新选择即可补齐。";
+            case SETUP: return "允许读取页面、接收提醒，并连接点击服务。";
+            case CHANGE_MODE: return "当前支持提醒，或选票到确认页后由你继续。";
+            default: return "先在大麦打开目标票档页，再开始；订单提交和付款仍由你完成。";
+        }
+    }
+
+    private LinearLayout expandable(LinearLayout target, String title, String subtitle, boolean expanded) {
+        LinearLayout box = card(target, 14);
+        Button header = button(title + "  ▾", false, v -> setPanelExpanded(title,
+                expandablePanels.get(title).getVisibility() != View.VISIBLE));
+        header.setGravity(Gravity.START | Gravity.CENTER_VERTICAL);
+        header.setBackgroundColor(Color.TRANSPARENT); box.addView(header);
+        if (!subtitle.isEmpty()) addText(box, subtitle, 12, MUTED, false, 2);
+        LinearLayout body = column(); box.addView(body, spaced(12));
+        expandablePanels.put(title, body); expandableButtons.put(title, header);
+        setPanelExpanded(title, expanded); return body;
+    }
+
+    private void setPanelExpanded(String title, boolean expanded) {
+        if (expanded && ("检查频率".equals(title) || "有票后怎么做".equals(title))) setPanelExpanded("更多设置", true);
+        LinearLayout body = expandablePanels.get(title); Button header = expandableButtons.get(title);
+        if (body == null || header == null) return;
+        body.setVisibility(expanded ? View.VISIBLE : View.GONE);
+        header.setText(title + (expanded ? "  ▴" : "  ▾"));
+        header.setContentDescription(title + (expanded ? "，已展开" : "，已收起"));
+    }
+
+    private String modeLabel(MonitorConfig.Mode mode) {
+        return mode == MonitorConfig.Mode.ALERT ? "提醒我" : mode == MonitorConfig.Mode.PREPARE ? "选票到确认页" : "提交订单，等我付款";
+    }
+
+    private boolean canEditQuickPreference() {
+        if (unsavedChanges) {
+            new AlertDialog.Builder(this).setTitle("先处理手动修改")
+                    .setMessage("你还有未保存的修改。先保存这些内容，再调整这里的选项。")
+                    .setNegativeButton("返回", null).setPositiveButton("继续编辑", (d, w) -> {
+                        showTab(1); setAdvancedExpanded(true);
+                    }).show(); return false;
+        }
+        pauseForInputSettings("正在调整购票选项，监控保持暂停。");
+        return true;
+    }
+
+    private void saveQuickPreference(MonitorConfig config) {
+        pauseForInputSettings("设置已更新，请核对后重新开始。");
+        store.saveConfig(config); restoreConfig(config);
+        store.setStatus("已保存，下次开始时使用新设置。");
+        refreshStatus(); toast("已保存");
+    }
+
+    private LinearLayout sheetContent() {
+        LinearLayout content = column(); content.setPadding(dp(20), dp(10), dp(20), dp(12)); return content;
+    }
+
+    private AlertDialog showSheet(String title, LinearLayout content, String close, String save) {
+        ScrollView scroll = new ScrollView(this); scroll.addView(content);
+        AlertDialog.Builder builder = new AlertDialog.Builder(this).setTitle(title).setView(scroll).setNegativeButton(close, null);
+        if (save != null) builder.setPositiveButton(save, null);
+        AlertDialog dialog = builder.create(); dialog.show();
+        if (dialog.getWindow() != null) {
+            dialog.getWindow().setBackgroundDrawable(shape(CARD, CARD, 22));
+            dialog.getWindow().setGravity(Gravity.BOTTOM);
+            dialog.getWindow().setLayout(-1, -2);
+        }
+        return dialog;
+    }
+
+    private void showModeSheet() {
+        if (!canEditQuickPreference()) return;
+        long revision = store.getConfigRevision();
+        MonitorConfig previous = store.loadConfig();
+        LinearLayout content = sheetContent();
+        RadioGroup options = new RadioGroup(this); options.setOrientation(RadioGroup.VERTICAL);
+        RadioButton alert = radio("只提醒我\n发现有票后，由我去大麦继续", "ALERT");
+        RadioButton prepare = radio("帮我选票\n选到确认购买页，由我提交和付款", "PREPARE");
+        RadioButton lock = radio(OrderCheckoutAdapter.isLiveVerified() ? "帮我锁票\n提交一次订单，等待我付款" : "帮我锁票 · 暂不可用\n真实订单流程尚未适配完成", "LOCK_ORDER");
+        lock.setEnabled(OrderCheckoutAdapter.isLiveVerified());
+        options.addView(alert); options.addView(prepare); options.addView(lock);
+        options.check(previous.mode == MonitorConfig.Mode.ALERT ? alert.getId()
+                : previous.mode == MonitorConfig.Mode.PREPARE ? prepare.getId() : lock.getId());
+        content.addView(options);
+        addText(content, "进入确认购买页还没有锁票；以大麦待付款订单为准。", 12, MUTED, false, 10);
+        AlertDialog dialog = showSheet("有票后怎么做", content, "取消", "保存选择");
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (revision != store.getConfigRevision()) { dialog.dismiss(); refreshStatus(); toast("设置已更新，请重新选择"); return; }
+            MonitorConfig.Mode mode = options.getCheckedRadioButtonId() == alert.getId() ? MonitorConfig.Mode.ALERT
+                    : options.getCheckedRadioButtonId() == prepare.getId() ? MonitorConfig.Mode.PREPARE : MonitorConfig.Mode.LOCK_ORDER;
+            if (mode == MonitorConfig.Mode.LOCK_ORDER && !OrderCheckoutAdapter.isLiveVerified()) { toast("自动锁票尚未完成，请选择其他方式"); return; }
+            saveQuickPreference(TaskPreferences.withMode(previous, mode)); dialog.dismiss();
+        });
+    }
+
+    private void showRhythmSheet() {
+        if (!canEditQuickPreference()) return;
+        MonitorConfig previous = store.loadConfig(); long revision = store.getConfigRevision();
+        LinearLayout content = sheetContent();
+        RadioGroup options = new RadioGroup(this); options.setOrientation(RadioGroup.VERTICAL);
+        RadioButton fast = radio("快速  ·  0.5–1.5 秒", "fast");
+        RadioButton normal = radio("常用  ·  1–3 秒", "normal");
+        RadioButton gentle = radio("稳健  ·  5–10 秒", "gentle");
+        RadioButton custom = radio("自定义", "custom");
+        options.addView(fast); options.addView(normal); options.addView(gentle); options.addView(custom); content.addView(options);
+        LinearLayout customInputs = row();
+        EditText min = new EditText(this), max = new EditText(this);
+        for (EditText input : new EditText[]{min, max}) {
+            input.setInputType(InputType.TYPE_CLASS_NUMBER | InputType.TYPE_NUMBER_FLAG_DECIMAL);
+            input.setTextSize(16); input.setSingleLine(); input.setMinHeight(dp(48)); input.setSaveEnabled(false);
+        }
+        min.setHint("最短秒数"); min.setContentDescription("最短间隔秒数"); min.setText(IntervalSeconds.format(previous.minIntervalMs));
+        max.setHint("最长秒数"); max.setContentDescription("最长间隔秒数"); max.setText(IntervalSeconds.format(previous.maxIntervalMs));
+        customInputs.addView(min, weighted()); customInputs.addView(max, weightedWithGap()); content.addView(customInputs, spaced(6));
+        int initial = previous.minIntervalMs == 500 && previous.maxIntervalMs == 1500 ? fast.getId()
+                : previous.minIntervalMs == 1000 && previous.maxIntervalMs == 3000 ? normal.getId()
+                : previous.minIntervalMs == 5000 && previous.maxIntervalMs == 10000 ? gentle.getId() : custom.getId();
+        options.check(initial); customInputs.setVisibility(initial == custom.getId() ? View.VISIBLE : View.GONE);
+        options.setOnCheckedChangeListener((g, id) -> customInputs.setVisibility(id == custom.getId() ? View.VISIBLE : View.GONE));
+        TextView validation = text("", 13, Color.rgb(168, 61, 46), false); content.addView(validation, spaced(6));
+        addText(content, "这是操作间的等待；页面加载另需时间，不等于库存更新频率。", 12, MUTED, false, 8);
+        Button explain = button("AI 帮我理解怎么选", false, null); content.addView(explain, spaced(12));
+        AlertDialog dialog = showSheet("检查速度", content, "取消", "保存速度");
+        explain.setOnClickListener(v -> { dialog.dismiss(); openAiContext("配置建议", "检查速度",
+                "请解释当前 " + IntervalSeconds.format(previous.minIntervalMs) + "–" + IntervalSeconds.format(previous.maxIntervalMs)
+                + " 秒操作间隔，并帮助我在快速、常用和稳健中选择。区分界面操作等待与服务器库存刷新，不承诺抢票成功，也不要自动修改设置。"); });
+        dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(v -> {
+            if (revision != store.getConfigRevision()) { dialog.dismiss(); refreshStatus(); toast("设置已更新，请重新选择"); return; }
+            int id = options.getCheckedRadioButtonId();
+            try {
+                long lower = id == fast.getId() ? 500 : id == normal.getId() ? 1000 : id == gentle.getId() ? 5000 : IntervalSeconds.parse(min.getText().toString());
+                long upper = id == fast.getId() ? 1500 : id == normal.getId() ? 3000 : id == gentle.getId() ? 10000 : IntervalSeconds.parse(max.getText().toString());
+                saveQuickPreference(TaskPreferences.withPace(previous, lower, upper)); dialog.dismiss();
+            } catch (IllegalArgumentException invalid) { validation.setText("请输入 0.5–600 秒，最长值不能小于最短值。"); }
+        });
+    }
+
+    private void openContextAi() {
+        String prior = store.getStatus();
+        boolean trouble = isPausedStatus(prior == null ? "" : prior) || homeStep() == HomeStep.SETUP;
+        String topic = trouble ? "异常分析" : "配置建议";
+        String question = trouble ? "请根据最近的公开页面摘要分析这次暂停或准备问题，用一两步告诉我接下来怎么做；若摘要不足，请直接说明。"
+                : store.loadConfig().eventKeyword.isEmpty() ? "帮我整理想看的演出和购票条件。先问我最重要的一个问题，不要替我猜场次或票价。"
+                : "请帮我核对当前演出、场次、票价和预算是否清楚，告诉我开始前还缺什么。不要把历史库存当成现在有票。";
+        openAiContext(topic, trouble ? "本次暂停与准备" : "购票计划", question);
+    }
+
+    private void openAiContext(String topic, String origin, String question) {
+        cn.local.tickethelper.ai.AiContextRepository.recordTaskIssue(store.getStatus());
+        pauseForInputSettings("正在使用 AI 辅助，监控保持暂停。");
+        startActivity(new Intent(this, AiAssistantActivity.class).putExtra("topic", topic)
+                .putExtra("origin_label", origin).putExtra("question", question));
     }
 
     private void section(LinearLayout target, String index, String title) {

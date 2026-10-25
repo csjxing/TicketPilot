@@ -66,11 +66,7 @@ public final class AiSecretsStore {
             try {
                 JSONObject record = read();
                 AiSettings current = settings(record);
-                if (expected == null || !current.enabled || !expected.enabled
-                        || !current.endpoint().equals(expected.endpoint()) || !current.model.equals(expected.model)
-                        || current.maxOutputTokens != expected.maxOutputTokens
-                        || current.dailyCallLimit != expected.dailyCallLimit
-                        || current.legacyTokenLimit != expected.legacyTokenLimit)
+                if (expected == null || !current.enabled || !expected.enabled || !current.matchesRequestSettings(expected))
                     throw new IOException();
                 String key = record.optString("key", "");
                 if (!AiSettings.validApiKey(key)) throw new IOException();
@@ -100,6 +96,7 @@ public final class AiSecretsStore {
                 JSONObject record = new JSONObject().put("schema", 1).put("enabled", value.enabled)
                         .put("base_url", value.baseUrl).put("model", value.model)
                         .put("max_output_tokens", value.maxOutputTokens).put("daily_call_limit", value.dailyCallLimit)
+                        .put("max_input_chars", value.maxInputChars).put("timeout_seconds", value.timeoutSeconds)
                         .put("legacy_token_limit", value.legacyTokenLimit).put("key", key);
                 plain = record.toString().getBytes(StandardCharsets.UTF_8);
                 Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -138,21 +135,19 @@ public final class AiSecretsStore {
                 String saved = record.optString("day", today);
                 int count = count(record);
                 return saved.compareTo(today) >= 0 ? count : 0;
-            } catch (Exception e) { return AiSettings.MAX_DAILY_CALLS; }
+            } catch (Exception e) { return -1; }
         }
     }
 
     /** Reserve durably before sending. Failed/cancelled calls are deliberately not refunded. */
     public void reserveCall(int dailyLimit) throws IOException {
-        if (dailyLimit < 1 || dailyLimit > AiSettings.MAX_DAILY_CALLS) throw new IOException("每日调用上限无效。");
+        if (dailyLimit < 0 || dailyLimit > AiSettings.MAX_DAILY_CALLS) throw new IOException("每日调用上限无效。");
         synchronized (LOCK) {
             try {
                 JSONObject record = readQuota();
-                String today = day(), saved = record.optString("day", today);
-                if (saved.compareTo(today) > 0) throw new IOException("手机日期早于已有调用记录，请先校正时间。");
-                int used = saved.equals(today) ? count(record) : 0;
-                if (used >= dailyLimit) throw new IOException("已达到今日模型调用上限，请明天再试或调整上限。");
-                write(quota, new JSONObject().put("schema", 1).put("day", today).put("used", used + 1)
+                String today = day();
+                int next = nextUsage(record, today, dailyLimit);
+                write(quota, new JSONObject().put("schema", 1).put("day", today).put("used", next)
                         .toString().getBytes(StandardCharsets.UTF_8));
             } catch (IOException e) {
                 if (e.getMessage() != null && (e.getMessage().startsWith("已达到") || e.getMessage().startsWith("手机日期"))) throw e;
@@ -163,17 +158,32 @@ public final class AiSecretsStore {
 
     private static String day() { return LocalDate.now(ZoneId.of("Asia/Shanghai")).toString(); }
 
+    /** Pure reservation policy; zero removes only the chosen cap, never accounting or validation. */
+    static int nextUsage(JSONObject record, String today, int dailyLimit) throws Exception {
+        if (dailyLimit < 0 || dailyLimit > AiSettings.MAX_DAILY_CALLS) throw new IOException("每日调用上限无效。");
+        String saved = record.getString("day");
+        if (!Integer.valueOf(1).equals(record.opt("schema")) || !LocalDate.parse(saved).toString().equals(saved)
+                || !LocalDate.parse(today).toString().equals(today)) throw new IOException();
+        int recorded = count(record);
+        if (saved.compareTo(today) > 0) throw new IOException("手机日期早于已有调用记录，请先校正时间。");
+        int used = saved.equals(today) ? recorded : 0;
+        if (dailyLimit > 0 && used >= dailyLimit)
+            throw new IOException("已达到今日模型调用上限，请明天再试或调整上限。");
+        if (used == Integer.MAX_VALUE) throw new IOException("已达到本机计数存储范围，请明天再试。");
+        return used + 1;
+    }
+
     private JSONObject readQuota() throws Exception {
         if (!exists(quota)) return new JSONObject().put("schema", 1).put("day", day()).put("used", 0);
         JSONObject value = new JSONObject(new String(readBytes(quota), StandardCharsets.UTF_8));
-        if (value.getInt("schema") != 1 || !LocalDate.parse(value.getString("day")).toString().equals(value.getString("day")))
+        if (!Integer.valueOf(1).equals(value.opt("schema")) || !LocalDate.parse(value.getString("day")).toString().equals(value.getString("day")))
             throw new IOException();
         count(value); return value;
     }
 
     private static int count(JSONObject record) throws Exception {
         Object raw = record.get("used");
-        if (!(raw instanceof Integer) || (Integer) raw < 0 || (Integer) raw > AiSettings.MAX_DAILY_CALLS)
+        if (!(raw instanceof Integer) || (Integer) raw < 0)
             throw new IOException();
         return (Integer) raw;
     }
@@ -193,11 +203,19 @@ public final class AiSecretsStore {
         } finally { Arrays.fill(plain, (byte) 0); }
     }
 
-    private static AiSettings settings(JSONObject value) {
+    static AiSettings settings(JSONObject value) {
         AiSettings defaults = AiSettings.defaults();
         return new AiSettings(value.optBoolean("enabled", false), value.optString("base_url", ""),
-                value.optString("model", ""), value.optInt("max_output_tokens", defaults.maxOutputTokens),
-                value.optInt("daily_call_limit", defaults.dailyCallLimit), value.optBoolean("legacy_token_limit", false));
+                value.optString("model", ""), settingInt(value, "max_output_tokens", defaults.maxOutputTokens),
+                settingInt(value, "daily_call_limit", defaults.dailyCallLimit), value.optBoolean("legacy_token_limit", false),
+                settingInt(value, "max_input_chars", defaults.maxInputChars), settingInt(value, "timeout_seconds", defaults.timeoutSeconds));
+    }
+
+    private static int settingInt(JSONObject record, String name, int fallback) {
+        if (!record.has(name)) return fallback;
+        Object value = record.opt(name);
+        if (!(value instanceof Integer)) throw new IllegalArgumentException("模型设置中的数值格式无效。");
+        return (Integer) value;
     }
 
     private static SecretKey key(boolean create) throws Exception {

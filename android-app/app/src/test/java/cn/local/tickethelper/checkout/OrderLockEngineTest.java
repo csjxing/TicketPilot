@@ -88,11 +88,40 @@ public final class OrderLockEngineTest {
         noProposal(evaluate(page(CheckoutObservation.Kind.CONFIRMATION).submit(submit("提交订单",UiItem.Source.NODE),false).build()));
         noProposal(evaluate(page(CheckoutObservation.Kind.PAYMENT_OR_PAID).build()));
     }
+    @Test public void alternateSubmitLabelStillRequiresNativeActionIdentity() {
+        assertEquals(CheckoutDecision.State.READY_TO_RESERVE,evaluate(page(CheckoutObservation.Kind.CONFIRMATION)
+                .submit(submit("立即提交",UiItem.Source.NODE),true).build()).state);
+        UiItem noId=new UiItem("立即提交",600,2300,1100,2450,true,true,false,UiItem.Source.NODE,"");
+        noProposal(evaluate(page(CheckoutObservation.Kind.CONFIRMATION).submit(noId,true).build()));
+        noProposal(evaluate(page(CheckoutObservation.Kind.CONFIRMATION).submit(submit("立即提交并支付",UiItem.Source.NODE),true).build()));
+    }
     @Test public void freshnessAndNativeSameFrameEvidenceAreMandatory() {
         noProposal(evaluate(page(CheckoutObservation.Kind.CONFIRMATION).frame("cn.damai",10,40,false,true).build()));
         noProposal(evaluate(page(CheckoutObservation.Kind.CONFIRMATION).frame("cn.other",10,40,true,true).build()));
         var observation=page(CheckoutObservation.Kind.CONFIRMATION).build();
         noProposal(engine.evaluate(config(),grant(),observation,null,NOW+3001));
+    }
+    @Test public void structuralSubmitNeedsAFrozenBindingThatSurvivesFinalRead() {
+        UiItem target=new UiItem("立即提交",600,2300,1100,2450,true,true,false,UiItem.Source.NODE,"");
+        CheckoutProfile profile=new CheckoutProfile.Builder("cn.damai","synthetic-structural",java.time.ZoneId.of("Asia/Shanghai"))
+                .page(CheckoutObservation.Kind.CONFIRMATION,"cn.damai:id/fixture_page",
+                        new CheckoutProfile.Selector("cn.damai:id/fixture_marker","cn.damai:id/fixture_page","确认购买"))
+                .field(CheckoutProfile.Role.SUBMIT,CheckoutProfile.Selector.anchoredSubmit("cn.damai:id/fixture_actions","0/4")).build();
+        CheckoutSubmitBinding binding=CheckoutSubmitBinding.from(profile);
+        CheckoutObservation initial=page(CheckoutObservation.Kind.CONFIRMATION).submit(target,true,binding).build();
+        CheckoutDecision ready=evaluate(initial); assertNotNull(ready.proposal);
+        assertEquals(binding,ready.proposal.submitBinding);
+        OrderAttempt reserved=OrderAttempt.reserved("structural-attempt",ready.proposal,NOW);
+        OrderAttempt sent=state(reserved,OrderAttempt.State.AWAITING_RESULT);
+        assertTrue(engine.revalidateForDispatch(config(),grant(),initial,ready.proposal,sent,NOW));
+        assertFalse(engine.revalidateForDispatch(config(),grant(),page(CheckoutObservation.Kind.CONFIRMATION)
+                .submit(target,true).build(),ready.proposal,sent,NOW));
+        CheckoutProfile changed=new CheckoutProfile.Builder("cn.damai","synthetic-structural",java.time.ZoneId.of("Asia/Shanghai"))
+                .page(CheckoutObservation.Kind.CONFIRMATION,"cn.damai:id/fixture_page",
+                        new CheckoutProfile.Selector("cn.damai:id/fixture_marker","cn.damai:id/fixture_page","确认购买"))
+                .field(CheckoutProfile.Role.SUBMIT,CheckoutProfile.Selector.anchoredSubmit("cn.damai:id/fixture_actions","0/3")).build();
+        assertFalse(engine.revalidateForDispatch(config(),grant(),page(CheckoutObservation.Kind.CONFIRMATION)
+                .submit(target,true,CheckoutSubmitBinding.from(changed)).build(),ready.proposal,sent,NOW));
     }
     @Test public void anyPersistedAttemptBlocksAnotherProposalEvenAfterGrantOrConfigChanges() {
         var observation=result(CheckoutObservation.Kind.CONFIRMATION).build();

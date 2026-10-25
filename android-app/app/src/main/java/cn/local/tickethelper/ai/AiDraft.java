@@ -72,8 +72,8 @@ public final class AiDraft {
             if (budget > 0 && prices.stream().anyMatch(p -> p > budget)) return null;
             Instant deadline = date.isEmpty() || time.isEmpty() ? null
                     : LocalDate.parse(date).atTime(LocalTime.parse(time)).atZone(ZoneId.of("Asia/Shanghai")).toInstant();
-            long min = current != null && current.minIntervalMs >= 3000 && current.minIntervalMs <= 600000 ? current.minIntervalMs : 5000;
-            long max = current != null && current.maxIntervalMs >= min && current.maxIntervalMs <= 600000 ? current.maxIntervalMs : Math.max(min, 10000);
+            long min = current != null && current.minIntervalMs >= MonitorConfig.MIN_INTERVAL_MS && current.minIntervalMs <= MonitorConfig.MAX_INTERVAL_MS ? current.minIntervalMs : 5000;
+            long max = current != null && current.maxIntervalMs >= min && current.maxIntervalMs <= MonitorConfig.MAX_INTERVAL_MS ? current.maxIntervalMs : Math.max(min, 10000);
             MonitorConfig.Mode mode = current != null && current.mode == MonitorConfig.Mode.PREPARE
                     ? MonitorConfig.Mode.PREPARE : MonitorConfig.Mode.ALERT;
             return new AiDraft(new MonitorConfig(event, city, date, time, prices, 1, budget, deadline, min, max, mode));

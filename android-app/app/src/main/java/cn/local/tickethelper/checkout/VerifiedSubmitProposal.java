@@ -9,9 +9,11 @@ public final class VerifiedSubmitProposal {
     public final long observedAtMs,frameGeneration;
     public final int windowId;
     public final UiItem submitTarget;
+    public final CheckoutSubmitBinding submitBinding;
     VerifiedSubmitProposal(LockAuthorization authorization,OrderTarget target,CheckoutObservation observation) {
         grantId=authorization.grantId; configFingerprint=authorization.configFingerprint;
         this.target=target; targetFingerprint=target.fingerprint(); observedAtMs=observation.observedAtMs;
         frameGeneration=observation.frameGeneration; windowId=observation.windowId; submitTarget=observation.submitTarget;
+        submitBinding=observation.submitBinding;
     }
 }

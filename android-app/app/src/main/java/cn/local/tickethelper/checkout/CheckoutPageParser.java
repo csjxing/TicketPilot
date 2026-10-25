@@ -43,8 +43,14 @@ public final class CheckoutPageParser {
             Reader reader = new Reader(tree, profile, page);
             String title = reader.value(Role.EVENT_TITLE), city = reader.value(Role.CITY);
             if (!fullText(title, 5, 300) || !fullText(city, 1, 40)) throw incomplete("public_identity_incomplete");
-            String date = date(reader.value(Role.SESSION_DATE));
-            String time = time(reader.value(Role.SESSION_TIME));
+            String date, time;
+            if (profile.fields.containsKey(Role.SESSION_DATETIME)) {
+                String[] session = sessionDateTime(reader.value(Role.SESSION_DATETIME));
+                date = session[0]; time = session[1];
+            } else {
+                date = date(reader.value(Role.SESSION_DATE));
+                time = time(reader.value(Role.SESSION_TIME));
+            }
             long unit = money(reader.value(Role.UNIT_PRICE), false);
             int quantity = integer(reader.value(Role.QUANTITY), 1, 100);
             long subtotal = money(reader.value(Role.TICKET_SUBTOTAL), false);
@@ -68,10 +74,10 @@ public final class CheckoutPageParser {
             if (page.kind == CheckoutObservation.Kind.CONFIRMATION) {
                 CheckoutFrame.Node agreement = reader.exact(Role.AGREEMENT);
                 CheckoutFrame.Node submit = reader.exact(Role.SUBMIT);
-                if (!submit.item.text.equals("提交订单")) throw incomplete("native_submit_label_unverified");
+                if (!CheckoutProfile.isSubmitLabel(submit.item.text)) throw incomplete("native_submit_label_unverified");
                 // Disabled submit / unchecked terms are genuine facts useful for selecting a viewer.
                 // They are not repaired; the order engine independently requires all final gates.
-                observation.agreements(agreement.checkable && agreement.checked).submit(submit.item, true);
+                observation.agreements(agreement.checkable && agreement.checked).submit(submit.item, true, CheckoutSubmitBinding.from(profile));
             } else {
                 String reference = reader.value(Role.ORDER_REFERENCE);
                 if (!reference.matches("[A-Za-z0-9_-]{4,200}")) throw incomplete("order_reference_invalid");
@@ -135,6 +141,12 @@ public final class CheckoutPageParser {
         if (!String.format(java.util.Locale.ROOT, "%02d:%02d", value.getHour(), value.getMinute()).equals(text))
             throw incomplete("session_time_invalid");
         return text;
+    }
+    private static String[] sessionDateTime(String text) {
+        if (!text.matches("(?:[0-9]{4}\\.[0-9]{2}\\.[0-9]{2}|[0-9]{4}-[0-9]{2}-[0-9]{2}) [0-9]{2}:[0-9]{2}"))
+            throw incomplete("session_datetime_invalid");
+        String[] parts = text.split(" ", -1);
+        return new String[]{date(parts[0].replace('.', '-')), time(parts[1])};
     }
     private static long timestamp(String text, CheckoutProfile profile) {
         if (!text.matches("[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}"))
@@ -220,6 +232,22 @@ public final class CheckoutPageParser {
         }
         List<CheckoutFrame.Node> matching(CheckoutProfile.Selector selector, CheckoutFrame.Node scope, boolean visibleOnly) {
             List<CheckoutFrame.Node> result = new ArrayList<>();
+            if (selector.isAnchored()) {
+                List<CheckoutFrame.Node> anchors = new ArrayList<>();
+                for (CheckoutFrame.Node node : frame.nodes)
+                    if (node.visible && node.item.resourceId.equals(selector.ancestorScopeId) && descendant(node, scope)) anchors.add(node);
+                if (anchors.size() > 1) throw new ParseFailure(Status.AMBIGUOUS, "structural_anchor_duplicate");
+                if (anchors.isEmpty()) return result;
+                CheckoutFrame.Node current = anchors.get(0); usable(current);
+                for (String index : selector.relativeChildPath.split("/")) {
+                    CheckoutFrame.Node next = nodes.get(current.key + "/" + index);
+                    if (next == null || !next.parentKey.equals(current.key)) return result;
+                    current = next;
+                }
+                // A changed ID or ancestry is a new layout, not permission to relax the contract.
+                if (current.item.resourceId.isEmpty() && (!visibleOnly || current.visible) && descendant(current, scope)) result.add(current);
+                return result;
+            }
             for (CheckoutFrame.Node node : frame.nodes) {
                 if ((!visibleOnly || node.visible) && node.item.resourceId.equals(selector.resourceId)
                         && descendant(node, scope) && hasAncestor(node, selector.ancestorScopeId, scope)) result.add(node);

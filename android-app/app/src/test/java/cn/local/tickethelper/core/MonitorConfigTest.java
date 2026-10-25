@@ -11,12 +11,18 @@ public class MonitorConfigTest {
                 Instant.parse("2026-10-23T11:30:00Z"),min,max,MonitorConfig.Mode.ALERT);
     }
     @Test public void acceptsCompleteConfiguration() { assertTrue(config("2026-10-23","19:30",1,1680,3000,6000).validate().isEmpty()); }
+    @Test public void acceptsFastAndLegacyIntervalsWithoutRounding() {
+        assertTrue(config("2026-10-23","19:30",1,1680,500,1500).validate().isEmpty());
+        assertTrue(config("2026-10-23","19:30",1,1680,501,600000).validate().isEmpty());
+        assertTrue(config("2026-10-23","19:30",1,1680,5000,10000).validate().isEmpty());
+    }
     @Test public void rejectsInvalidCalendarDate() { assertFalse(config("2026-02-30","19:30",1,1680,3000,6000).validate().isEmpty()); }
     @Test public void rejectsInvalidTime() { assertFalse(config("2026-10-23","25:30",1,1680,3000,6000).validate().isEmpty()); }
     @Test public void rejectsMoreThanOneTicketInThisVersion() { assertFalse(config("2026-10-23","19:30",2,3360,3000,6000).validate().isEmpty()); }
     @Test public void rejectsOverBudgetTiers() { assertFalse(config("2026-10-23","19:30",1,1000,3000,6000).validate().isEmpty()); }
-    @Test public void rejectsAggressiveOrReversedIntervals() {
-        assertFalse(config("2026-10-23","19:30",1,1680,500,6000).validate().isEmpty());
+    @Test public void rejectsSubMinimumReversedOrOverMaximumIntervals() {
+        assertFalse(config("2026-10-23","19:30",1,1680,499,6000).validate().isEmpty());
         assertFalse(config("2026-10-23","19:30",1,1680,7000,6000).validate().isEmpty());
+        assertFalse(config("2026-10-23","19:30",1,1680,500,600001).validate().isEmpty());
     }
 }

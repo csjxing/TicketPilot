@@ -18,6 +18,14 @@ public class AiContextPolicyTest {
         assertNotNull(draft);assertEquals(Instant.parse("2030-11-15T11:00:00Z"),draft.config.deadline);
         assertEquals(List.of(980,1380),draft.config.prices);
     }
+    @Test public void draftingAnotherTargetPreservesUserSelectedSubSecondIntervals() {
+        MonitorConfig c = old();
+        MonitorConfig fast = new MonitorConfig(c.eventKeyword,c.city,c.date,c.time,c.prices,c.quantity,c.maxTotal,
+                c.deadline,500,1501,MonitorConfig.Mode.PREPARE);
+        AiDraft draft = AiDraft.fromResponse("{\"ticketpilot_draft\":{\"event\":\"新演出\"}}",fast);
+        assertNotNull(draft); assertEquals(500,draft.config.minIntervalMs); assertEquals(1501,draft.config.maxIntervalMs);
+        assertEquals(MonitorConfig.Mode.PREPARE,draft.config.mode);
+    }
     @Test public void untrustedDraftCannotSetActionsIdentityOrAuthorizeOrders() {
         for(String suffix:List.of(",\"mode\":\"LOCK_ORDER\"",",\"armed\":true",",\"viewer\":\"测试人\"",",\"tap\":[1,2]",",\"deadline\":\"2030-01-01\""))
             assertNull(parse("{\"event\":\"测试演出\""+suffix+"}"));
@@ -32,6 +40,16 @@ public class AiContextPolicyTest {
         assertFalse(text.contains("测试人"));assertFalse(text.contains("13800138000"));assertFalse(text.contains("sk-secret"));assertFalse(text.contains("me@example.com"));
         assertTrue(text.contains("980元"));assertTrue(text.contains("2026-11-15"));
         assertFalse(AiRedactor.clean("prefix-very-secret-value",List.of("very-secret-value"),12).contains("very-secret"));
+    }
+    @Test public void expandedOpaqueTextKeepsItsTailAndRedactsWholeEmailTokens() {
+        String opaque="x".repeat(AiSettings.MAX_QUESTION_CHARS);
+        String input=opaque+" END 说明：first.last+tag@example.co.uk；[next@test.example] API Key: fixture-secret-value";
+        String clean=AiRedactor.clean(input,List.of(),Integer.MAX_VALUE);
+        assertTrue(clean.startsWith(opaque+" END"));
+        assertTrue(clean.contains("[邮箱已隐藏]"));
+        assertFalse(clean.contains("first.last"));assertFalse(clean.contains("next@test"));
+        assertFalse(clean.contains("fixture-secret-value"));assertFalse(clean.contains("已截短"));
+        assertEquals("[邮箱已隐藏]",AiRedactor.clean(opaque+"@example.com",List.of(),Integer.MAX_VALUE));
     }
     @Test public void escapedMemberNamesCannotHideDuplicateFieldsOnAndroid() {
         assertNull(parse("{\"event\":\"测试\",\"" + "\\" + "u0065vent\":\"另一场\"}"));

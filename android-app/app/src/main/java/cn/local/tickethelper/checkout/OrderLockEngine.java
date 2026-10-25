@@ -41,7 +41,8 @@ public final class OrderLockEngine {
                 || current.observedAtMs < proposal.observedAtMs || nowMs-proposal.observedAtMs > 3000
                 || current.windowId != proposal.windowId || current.frameGeneration != proposal.frameGeneration
                 || !matchesAuthorization(authorization,current) || !current.agreementsAccepted
-                || !current.uniqueNativeSubmitTarget || !nativeSubmit(current.submitTarget)
+                || !current.uniqueNativeSubmitTarget || !nativeSubmit(current.submitTarget,current.submitBinding)
+                || !java.util.Objects.equals(proposal.submitBinding,current.submitBinding)
                 || !sameControl(proposal.submitTarget,current.submitTarget)) return false;
         return proposal.targetFingerprint.equals(target(current).fingerprint());
     }
@@ -60,7 +61,7 @@ public final class OrderLockEngine {
         if (!observation.agreementsAccepted)
             return result(CheckoutDecision.State.NEEDS_REVIEW,"checkout_agreements_unverified");
         UiItem submit = observation.submitTarget;
-        if (!observation.uniqueNativeSubmitTarget || !nativeSubmit(submit))
+        if (!observation.uniqueNativeSubmitTarget || !nativeSubmit(submit,observation.submitBinding))
             return result(CheckoutDecision.State.NEEDS_REVIEW,"native_order_submit_unverified");
         OrderTarget target = target(observation);
         return new CheckoutDecision(CheckoutDecision.State.READY_TO_RESERVE,"checkout_facts_verified",
@@ -194,9 +195,10 @@ public final class OrderLockEngine {
         try { return LocalDate.parse(date).toString().equals(date) && LocalTime.parse(time).toString().equals(time); }
         catch (java.time.DateTimeException invalid) { return false; }
     }
-    private static boolean nativeSubmit(UiItem target) {
+    private static boolean nativeSubmit(UiItem target,CheckoutSubmitBinding binding) {
         return target != null && target.source == UiItem.Source.NODE && target.hasBounds() && target.enabled
-                && target.clickable && target.resourceId.startsWith("cn.damai:id/") && target.text.trim().equals("提交订单");
+                && target.clickable && CheckoutProfile.isSubmitLabel(target.text.trim())
+                && (binding == null ? target.resourceId.startsWith("cn.damai:id/") : binding.matchesTarget(target));
     }
     private static boolean sameControl(UiItem expected,UiItem current) {
         return expected != null && current != null && expected.source == current.source

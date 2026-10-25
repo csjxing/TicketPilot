@@ -24,6 +24,22 @@ public final class OrderCheckoutAdapter {
         return supportedVersion(installedVersion(context));
     }
 
+    /** Match the frozen no-ID contract back to one verified current-version profile before live rebinding. */
+    public static AccessibilityNodeInfo findSubmitTarget(AccessibilityService service,VerifiedSubmitProposal proposal,
+                                                          LongSupplier generation,long deadlineElapsedMs) {
+        if (proposal == null || generation == null || generation.getAsLong() != proposal.frameGeneration) return null;
+        String version=installedVersion(service);
+        if (!supportedVersion(version)) return null;
+        if (proposal.submitBinding == null)
+            return CheckoutNativeTarget.find(service,proposal.submitTarget,proposal.windowId,deadlineElapsedMs);
+        int matches=0;
+        for (CheckoutProfile profile:VERIFIED_PROFILES)
+            if (version.equals(profile.appVersion) && proposal.submitBinding.matchesProfile(profile)) matches++;
+        if (matches != 1) return null;
+        return CheckoutNativeTarget.findStructuralSubmit(service,proposal.submitTarget,proposal.windowId,
+                proposal.submitBinding,generation,proposal.frameGeneration,deadlineElapsedMs);
+    }
+
     /** Final row binding after locating the actual checkbox, before any selection input. */
     public static boolean viewerControlMatches(Context context, AccessibilityNodeInfo control,
                                                 String name, String suffix, long deadlineElapsedMs) {

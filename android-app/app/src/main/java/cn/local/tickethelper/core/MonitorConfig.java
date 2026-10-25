@@ -11,6 +11,7 @@ import java.util.List;
 
 /** Local user settings. Money is expressed in whole yuan. */
 public final class MonitorConfig {
+    public static final int MIN_INTERVAL_MS = 500, MAX_INTERVAL_MS = 600000;
     public enum Mode { ALERT, PREPARE, LOCK_ORDER }
     public final String eventKeyword, city, date, time;
     public final List<Integer> prices;
@@ -61,8 +62,8 @@ public final class MonitorConfig {
             errors.add("总预算不能低于任一接受票价的票款");
         if (deadline == null) errors.add("请设置停止时间");
         else try { deadline.toEpochMilli(); } catch (ArithmeticException e) { errors.add("停止时间超出有效范围"); }
-        if (minIntervalMs < 3000 || maxIntervalMs < minIntervalMs || maxIntervalMs > 600000)
-            errors.add("轮询间隔须介于 3 秒与 10 分钟，最大值不能小于最小值");
+        if (minIntervalMs < MIN_INTERVAL_MS || maxIntervalMs < minIntervalMs || maxIntervalMs > MAX_INTERVAL_MS)
+            errors.add("操作间隔须介于 0.5 秒与 10 分钟，最大值不能小于最小值");
         if (mode == null) errors.add("请选择提醒、准备或锁单模式");
         return Collections.unmodifiableList(errors);
     }

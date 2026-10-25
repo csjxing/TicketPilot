@@ -48,6 +48,14 @@ public final class TransferBundleTest {
         assertFalse(raw.contains("armed")); assertFalse(raw.contains("viewer")); assertFalse(raw.contains("token"));
         assertFalse(raw.contains("input_mode")); assertFalse(raw.contains("order")); assertFalse(raw.contains("title"));
     }
+    @Test public void subSecondIntervalsSurvivePublicBackupRoundTrip() throws Exception {
+        MonitorConfig original = config(MonitorConfig.Mode.PREPARE);
+        MonitorConfig fast = new MonitorConfig(original.eventKeyword, original.city, original.date, original.time,
+                original.prices, original.quantity, original.maxTotal, original.deadline, 500, 1501, original.mode);
+        TransferBundle.Preview restored = read(bundle(fast));
+        assertEquals(500, restored.config.minIntervalMs); assertEquals(1501, restored.config.maxIntervalMs);
+        assertEquals(MonitorConfig.Mode.PREPARE, restored.config.mode);
+    }
     @Test public void lockModeIsAlwaysDowngradedBeforeImportPreview() throws Exception {
         TransferBundle.Preview p = read(bundle(config(MonitorConfig.Mode.LOCK_ORDER)));
         assertTrue(p.modeDowngraded); assertEquals(MonitorConfig.Mode.PREPARE, p.config.mode);

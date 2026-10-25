@@ -4,7 +4,7 @@ package cn.local.tickethelper.core;
 public enum HomeStep {
     RUNNING("请切回大麦，保持页面可见", "暂停监控"),
     SELECT("先选一场想看的演出", "选择演出"),
-    REVIEW_IMPORTED("换机目标需要重新核对", "重新选择并核对"),
+    REVIEW_IMPORTED("请先核对这份目标", "重新选择并核对"),
     REPAIR_TARGET("这份目标还不能开始", "检查目标"),
     SETUP("还有必要设置未完成", "完成设置"),
     CHANGE_MODE("自动锁单当前尚未开放", "选择可用方式"),

@@ -25,8 +25,7 @@ import javax.net.ssl.HttpsURLConnection;
 
 /** A bounded, text-only manual request. Replies have no path to a gesture or order executor. */
 public final class AiHttpClient {
-    private static final int MAX_BODY_BYTES = 256 * 1024, MAX_REPLY_CHARS = 16000;
-    private static final long TOTAL_TIMEOUT_MS = 40000;
+    private static final int MAX_BODY_BYTES = 8 * 1024 * 1024, MAX_REPLY_CHARS = 1_048_576;
     // A provider/DNS stall cannot grow an unbounded number of workers or hold the caller forever.
     private static final ThreadPoolExecutor WORKERS = new ThreadPoolExecutor(0, 2, 30, TimeUnit.SECONDS,
             new SynchronousQueue<>(), task -> { Thread thread = new Thread(task, "ticketpilot-ai-http"); thread.setDaemon(true); return thread; });
@@ -73,13 +72,11 @@ public final class AiHttpClient {
         if (settings == null || !settings.enabled || !settings.validate().isEmpty())
             throw new Failure("请先启用并保存有效的模型设置。");
         if (!AiSettings.validApiKey(apiKey)) throw new Failure("请先在设置中填写有效的 API Key。");
-        if (systemPrompt == null || systemPrompt.isEmpty() || systemPrompt.length() > 12000
-                || userPrompt == null || userPrompt.isEmpty() || userPrompt.length() > 32000)
-            throw new Failure("发送内容为空或过长，请减少本次问题与上下文。");
+        validateInput(settings, systemPrompt, userPrompt);
         Cancellation token = cancellation == null ? new Cancellation() : cancellation;
         if (token.isCancelled()) throw new Failure("本次分析已取消。");
         if (!token.started.compareAndSet(false, true)) throw new Failure("请为每次分析重新建立请求。");
-        long began = System.nanoTime(), deadline = began + TimeUnit.MILLISECONDS.toNanos(TOTAL_TIMEOUT_MS);
+        long began = System.nanoTime(), deadline = began + TimeUnit.SECONDS.toNanos(settings.timeoutSeconds);
         Future<Result> future;
         try {
             byte[] body = requestBody(settings, systemPrompt, userPrompt);
@@ -104,17 +101,25 @@ public final class AiHttpClient {
     }
 
     static byte[] requestBody(AiSettings settings, String systemPrompt, String userPrompt) throws Failure {
+        validateInput(settings, systemPrompt, userPrompt);
         try {
             JSONObject request = new JSONObject().put("model", settings.model).put("stream", false).put("store", false)
-                    .put(settings.legacyTokenLimit ? "max_tokens" : "max_completion_tokens", settings.maxOutputTokens)
                     .put("messages", new JSONArray()
                             .put(new JSONObject().put("role", "system").put("content", systemPrompt))
                             .put(new JSONObject().put("role", "user").put("content", userPrompt)));
+            if (settings.maxOutputTokens != 0)
+                request.put(settings.legacyTokenLimit ? "max_tokens" : "max_completion_tokens", settings.maxOutputTokens);
             byte[] body = request.toString().getBytes(StandardCharsets.UTF_8);
             if (body.length > MAX_BODY_BYTES) throw new Failure("发送内容过长，请减少本次上下文。");
             return body;
         } catch (Failure e) { throw e; }
         catch (Exception e) { throw new Failure("无法准备本次模型请求。"); }
+    }
+
+    private static void validateInput(AiSettings settings, String systemPrompt, String userPrompt) throws Failure {
+        if (settings == null || !settings.validate().isEmpty()) throw new Failure("请先保存有效的模型设置。");
+        try { settings.validateInput(systemPrompt, userPrompt); }
+        catch (IllegalArgumentException e) { throw new Failure(e.getMessage()); }
     }
 
     private static Result request(String endpoint, String apiKey, byte[] body, Cancellation token,
@@ -126,7 +131,7 @@ public final class AiHttpClient {
             token.attach(connection);
             connection.setInstanceFollowRedirects(false);
             connection.setConnectTimeout(10000);
-            connection.setReadTimeout(30000);
+            connection.setReadTimeout(remainingTimeoutMs(deadline));
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
             connection.setUseCaches(false);
@@ -150,7 +155,7 @@ public final class AiHttpClient {
                 byte[] buffer = new byte[4096];
                 while (true) {
                     ensureActive(token, deadline);
-                    connection.setReadTimeout((int) Math.min(30000, Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()))));
+                    connection.setReadTimeout(remainingTimeoutMs(deadline));
                     int count = in.read(buffer);
                     if (count == -1) break;
                     if (bytes.size() + count > MAX_BODY_BYTES) throw new Failure("模型响应过大，本次已停止。");
@@ -204,9 +209,11 @@ public final class AiHttpClient {
                 throw new Failure("模型没有返回文字建议，请调整问题或输出上限。");
             String text = ((String) value).trim();
             if (apiKey != null && !apiKey.isEmpty()) text = text.replace(apiKey, "[已隐藏密钥]");
-            boolean truncated = text.length() > MAX_REPLY_CHARS || "length".equals(choice.optString("finish_reason"));
-            if (text.length() > MAX_REPLY_CHARS) text = text.substring(0, MAX_REPLY_CHARS);
-            if (truncated) text += "\n\n（本次建议可能未完整，请缩小问题范围后再分析。）";
+            boolean localTruncation = text.length() > MAX_REPLY_CHARS;
+            if (localTruncation) text = text.substring(0, MAX_REPLY_CHARS)
+                    + "\n\n（回复超过本机显示上限，已显示前 1048576 个字符。请要求分段回答；提高输出参数不会解除此显示上限。）";
+            else if ("length".equals(choice.optString("finish_reason")))
+                text += "\n\n（服务商因长度限制结束回复，本次建议可能未完整。可提高输出上限、使用服务商默认值，或要求分段回答；服务商仍有自身限制。）";
             JSONObject usage = root.optJSONObject("usage");
             return new Result(text, usageNumber(usage, "prompt_tokens"), usageNumber(usage, "completion_tokens"), elapsedMs);
         } catch (Failure e) { throw e; }
@@ -225,6 +232,10 @@ public final class AiHttpClient {
     private static void ensureActive(Cancellation token, long deadline) throws Failure {
         if (token.isCancelled() || Thread.currentThread().isInterrupted()) throw new Failure("本次分析已取消。");
         if (System.nanoTime() >= deadline) throw new Failure("模型响应超时，本次已停止；不会自动重试。");
+    }
+
+    private static int remainingTimeoutMs(long deadline) {
+        return (int) Math.min(Integer.MAX_VALUE, Math.max(1, TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime())));
     }
 
     private static void disconnectAsync(HttpURLConnection connection) {
