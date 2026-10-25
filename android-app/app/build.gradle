@@ -1,0 +1,47 @@
+plugins { id 'com.android.application' }
+
+android {
+    namespace 'cn.local.tickethelper'
+    compileSdk 35
+    defaultConfig {
+        applicationId 'cn.local.tickethelper'
+        minSdk 30
+        targetSdk 35
+        versionCode 11
+        versionName '0.1.10-preview'
+    }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+    buildTypes {
+        release { minifyEnabled false }
+    }
+    buildFeatures { aidl true }
+    lint { abortOnError true }
+}
+
+// A portable, reproducible source handoff. Only explicit project sources are included;
+// local.properties, build output, device captures, credentials and runtime state are excluded.
+def handoffAssets = layout.buildDirectory.dir('generated/handoffAssets')
+def sourceHandoff = tasks.register('generateHandoffSource', Zip) {
+    archiveFileName = 'source.zip'
+    destinationDirectory = handoffAssets.map { it.dir('handoff') }
+    reproducibleFileOrder = true
+    preserveFileTimestamps = false
+    from(rootProject.projectDir) {
+        include 'README.md', 'VALIDATION.md', 'AGENTS.md', 'handoff/**', 'build.gradle', 'settings.gradle', 'gradle.properties'
+        include 'gradlew', 'gradlew.bat', 'gradle/wrapper/**', 'app/build.gradle', 'app/src/**'
+        exclude '**/local.properties', '**/*.keystore', '**/*.jks', '**/.DS_Store', '**/__pycache__/**', '**/*.pyc', '**/doctor-report*.json'
+    }
+}
+android.sourceSets.main.assets.srcDir(handoffAssets)
+tasks.named('preBuild').configure { dependsOn(sourceHandoff) }
+// Repository tests read the actual offline documents, so document edits invalidate test results.
+tasks.withType(Test).configureEach { inputs.dir('src/main/assets/knowledge') }
+dependencies {
+    implementation 'com.google.mlkit:text-recognition-chinese:16.0.1'
+    implementation 'dev.rikka.shizuku:api:13.1.5'
+    implementation 'dev.rikka.shizuku:provider:13.1.5'
+    testImplementation 'junit:junit:4.13.2'
+}

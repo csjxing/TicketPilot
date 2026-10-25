@@ -19,3 +19,22 @@ __pycache__/
 *.png
 *.jpg
 *.mp4
+
+# Generated deliveries, Android caches and machine-local setup.
+/exports/
+.gradle/
+.kotlin/
+build/
+local.properties
+.idea/
+*.iml
+doctor-report*.json
+
+# Signing materials and compiled packages are distributed separately.
+*.jks
+*.keystore
+*.pem
+*.key
+*.apk
+*.aab
+*.hprof

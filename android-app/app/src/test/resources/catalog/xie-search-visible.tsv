@@ -1,0 +1,31 @@
+cn.damai:id/search_v2_container		0,0,1260,2709	true	false
+cn.damai:id/header_search_v2_input	谢霆锋杭州演唱会	77,144,909,284	true	true
+cn.damai:id/tv_title	全部	77,319,189,424	true	false
+cn.damai:id/tv_title	演出	259,319,363,424	true	false
+cn.damai:id/tv_title	电影	433,319,537,424	true	false
+cn.damai:id/tv_title	艺人	607,319,711,424	true	false
+cn.damai:id/tv_title	厂牌	781,319,885,424	true	false
+cn.damai:id/tv_title	景点	955,319,1059,424	true	false
+cn.damai:id/tv_title	影院	1129,319,1233,424	true	false
+cn.damai:id/contentLayout		42,442,1218,1239	true	false
+cn.damai:id/tour_project_container		42,442,1218,730	true	true
+cn.damai:id/tv_project_tourName	EvolutionNicLive谢霆锋进化演唱会	267,532,1176,594	true	false
+cn.damai:id/tour_recyclerView		42,730,1218,1239	true	false
+cn.damai:id/ll_city_tour		84,730,434,958	true	true
+cn.damai:id/tv_city	广州	210,762,308,819	true	false
+cn.damai:id/tv_time	12.19-12.20	168,826,350,867	true	false
+cn.damai:id/tv_project_status	预约抢票	189,878,329,919	true	false
+cn.damai:id/ll_city_tour		455,730,805,958	true	true
+cn.damai:id/tv_city	杭州	581,762,679,819	true	false
+cn.damai:id/tv_time	11.14-11.15	546,826,714,867	true	false
+cn.damai:id/tv_project_status	热卖中	577,878,682,919	true	false
+cn.damai:id/ll_city_tour		826,730,1176,958	true	true
+cn.damai:id/tv_city	温州	952,762,1050,819	true	false
+cn.damai:id/tv_time	10.31-11.01	913,826,1088,867	true	false
+cn.damai:id/tv_project_status	缺货登记	931,878,1071,919	true	false
+cn.damai:id/ll_city_tour		84,979,434,1207	true	true
+cn.damai:id/tv_city	福州	210,1011,308,1068	true	false
+cn.damai:id/tv_time	11.28	218,1075,300,1116	true	false
+cn.damai:id/tv_project_status	缺货登记	189,1127,329,1168	true	false
+cn.damai:id/title	演出附近必玩景点	84,1313,532,1388	true	false
+cn.damai:id/title	EvolutionNicLive谢霆锋进化演唱会-杭州站	151,2392,810,2458	true	false

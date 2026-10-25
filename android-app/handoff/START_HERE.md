@@ -1,0 +1,108 @@
+# 在另一台电脑接手票务助手
+
+这个工程用于继续维护**同一台 vivo 上的票务助手**。日常操作留在手机，换电脑是为了让 Codex 或其他开发工具继续改进应用；不需要把手机配置导入另一台手机，也不需要把源码放进手机运行。
+
+## 先把工程带到新电脑
+
+在手机票务助手的“使用与维护 → 电脑接手与备份”中选择“导出电脑交接包（ZIP）”，用你选定的文件方式传到电脑并解压。这个 ZIP 的根目录就是 Android 工程，应能看到：
+
+```text
+AGENTS.md
+README.md
+VALIDATION.md
+app/
+gradle/
+gradlew
+gradlew.bat
+handoff/START_HERE.md
+handoff/doctor.py
+```
+
+如果手里是较早的“资料与目标备份”包，先解压，再将其中的 `handoff/source.zip` 解压到独立目录。用 Codex、Android Studio 或其他工具**打开这份工程目录**，不要只打开一个 Java 文件。内置源码快照对应导出安装包的构建版本，原始设备日志、电脑私有环境和后续未打包修改不会自动包含在内。
+
+给新工具的开场请求可直接写：
+
+> 继续维护这个 Android 票务助手，仍使用我原来的 vivo。先读 AGENTS.md、handoff/START_HERE.md、README.md 和 VALIDATION.md，运行只读 doctor 核对环境，再根据当前真实状态继续。不要把历史测试场次当作新购票目标，也不要自动卸载现有应用。
+
+## 只读检查新电脑
+
+需要 Python 3.9 或以上。下面的命令在**解压后的工程根目录**执行。它们不构建、不下载依赖、不安装、不启动应用、不点击、不解锁、不清数据、不创建订单。
+
+macOS / Linux：
+
+```sh
+python3 handoff/doctor.py --offline
+```
+
+Windows PowerShell：
+
+```powershell
+py -3 handoff/doctor.py --offline
+```
+
+doctor 核对工程版本、Java 17、Android SDK、Platform Tools 和 Gradle Wrapper。当前工程使用 Android SDK Platform 35、Java 17；Gradle 和 Android Gradle Plugin 的精确版本以 `gradle/wrapper/gradle-wrapper.properties`、`build.gradle` 为准。脚本只检查 Wrapper 文件和运行时缓存，不运行 Gradle，也不能据此证明依赖缓存或完整构建已经通过。
+
+SDK 可通过 `ANDROID_HOME` / `ANDROID_SDK_ROOT` 或 `--sdk` 指定，Java 可通过 `JAVA_HOME` / `--java` 指定；`--java` 接受的是 `java` 可执行文件路径。ADB 按 `--adb`、`ANDROID_HOME/platform-tools`、PATH 查找，也会使用已经解析到的 SDK 中的 Platform Tools。
+
+```sh
+python3 handoff/doctor.py --offline --sdk "/path/to/android-sdk" --java "/path/to/jdk-17/bin/java"
+```
+
+Windows 路径请使用你本机的实际位置，并为有空格的路径加引号。源码包不携带旧电脑的 `local.properties`、JDK、SDK 或 Gradle 缓存。
+
+## 联调原来的 vivo
+
+只连接目标手机，保持大麦和票务助手数据原样。新电脑需要由用户在手机正常确认 USB 调试授权；如果锁屏，由用户解锁。不要用改锁屏或隐藏设置的方法绕过授权。
+
+macOS / Linux：
+
+```sh
+python3 handoff/doctor.py --json doctor-report.json
+```
+
+Windows：
+
+```powershell
+py -3 handoff/doctor.py --json doctor-report.json
+```
+
+ADB 不在已知位置时可追加 `--adb "/path/to/adb"`（Windows 为 `adb.exe`）。报告只输出设备数量、当前枚举索引、型号、公开应用版本、锁屏/亮屏和授权服务的有限状态；不输出序列号、账号、原始偏好设置、页面文字、截图、日志或 Shizuku PID。原始命令输出只在内存解析，不写入报告。报告文件是本工具唯一主动写入的文件；`--json -` 可只输出 JSON。
+
+如果检测到多台设备，默认不检查任何一台。推荐断开其他设备后重跑；也可用 `--device-index 1` 显式选择。**编号只对应本次枚举，重新插拔后可能改变**，不能把它当作手机身份或长期配置。
+
+“屏幕亮着”不等于“已解锁”，“权限已启用”不等于“服务已连接”，“Shizuku 进程存在”不等于“票务助手已授权并能点击”。无法核实的字段为 `unknown` / `null`；Shizuku 授权和助手输入连接、通知类别状态仍需在手机检查。doctor 不读取私人配置来补齐这些字段。
+
+## 接下来做什么
+
+1. 先看当前 [验收记录](../VALIDATION.md)，区分已经通过、仅单元测试通过和未验证。
+2. 对照 doctor 的具体缺项准备电脑工具。首次构建可能需要下载 Wrapper 与依赖；这一步由开发者有意识地执行，doctor 不替你安装。
+3. 先改代码并运行必要检查。macOS / Linux 可用 `sh ./gradlew --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`；Windows 用 `gradlew.bat --no-daemon :app:testDebugUnitTest :app:lintDebug :app:assembleDebug`。
+4. 真机测试前重新核对目标、日期、价格、数量、模式和手机状态。此次接手不自动开始监控或沿用旧测试场次。对手机的测试由一个操作者执行，其他代理只做代码或只读审查。
+5. 接线测试和真正拔线后的手机本地运行分别验收，方法见 [独立运行审计](STANDALONE_AUDIT.md)。不能把电脑发出的 ADB 点击当作手机 App 自动动作。
+
+doctor 的离线测试可直接运行，不需要手机、ADB 或 Android 环境：
+
+```sh
+python3 -m unittest discover -s handoff -p "test_doctor.py"
+```
+
+Windows 将 `python3` 换为 `py -3` 即可。
+
+## 现有能力与缺口
+
+记录截点为 2026-10-25。v0.1.8 的前台启动与 PREPARE 已在 USB 接线状态下通过：助手自动试选目标票档，核实价格、数量和票款，进入已加载的确认购买页后停止。这个结果没有提交订单或证明锁票。
+
+v0.1.9 在原 vivo 验证过新版导航、离线知识搜索、文件导出、导入预览与取消、损坏包拒绝、纯资料包预览和 APK 导出。不能把这些界面验收外推为自动下单或拔线运行已通过。最新 UI 名称和后续构建证据以 README、VALIDATION 和包内版本为准。
+
+**自动锁单尚未开放，生产订单页面适配名单仍为空。**真实确认页有无原生 ID 的“立即提交”控件和复合字段，观演人、费用、协议及待付款结果还需真实证据适配。**USB 物理拔线运行仍未验收**；过往断线测试发现过 Shizuku 发起 force-stop，但不能据此断言所有拔线场景都会失败或已经修复。
+
+## 覆盖安装前先核对签名
+
+另一台电脑首次构建通常会生成不同的调试签名。版本名相同、源码相同，仍不意味着能覆盖安装现有 App。
+
+- 遇到签名不匹配或 `INSTALL_FAILED_UPDATE_INCOMPATIBLE` 时停下核对签名与构建来源。**禁止通过卸载重装或清数据来逃避覆盖签名错误**；这会丢失本机配置、授权关联和订单防重复记录。
+- 如需保持覆盖更新能力，原签名材料需要由用户通过单独的安全渠道迁移。源码 ZIP、资料包和 doctor 报告都不包含也不应包含 keystore、密码或私钥。
+- 导出的现有 APK 可帮助保存当时安装版本，但不能替代签名私钥，也不能为后续改动重新签出相同签名。
+- 确定新的安装策略前，保持原 vivo 上应用与数据完整。不要以“重新开始更简单”为由重置。
+
+本交接包保存可阅读的工程知识与源码，不保存账号、完整证件、手机授权凭据、原始会话或系统级安装能力。新电脑工具要以本次观察和用户当前请求为准继续工作。

@@ -1,0 +1,5 @@
+<resources>
+    <string name="history_summary">本地保留 %1$d 条记录\n%2$s</string>
+    <string name="permission_summary">无障碍 %1$s · 通知 %2$s</string>
+    <string name="accessibility_description">仅在你主动启动任务后，读取真实大麦界面的文字并执行可见的返回和票档点击。截图仅在内存中用于本地文字识别，不上传、不保存。遇到验证码、登录、锁屏、切换应用或确认购买页时暂停。请在使用前确认目标配置。</string>
+</resources>

@@ -1,0 +1,35 @@
+cn.damai:id/title_tv	杭州·EvolutionNicLive谢霆锋进化演唱会-杭州站	193,192,1186,249	true	false	NODE
+cn.damai:id/project_detail_perform_flowlayout		74,410,1186,810	true	false	NODE
+cn.damai:id/ll_perform_item		74,410,804,578	true	false	NODE
+cn.damai:id/tv_tag	无票	650,465,762,521	true	false	NODE
+cn.damai:id/ll_perform_item		74,610,789,778	true	false	NODE
+cn.damai:id/tv_tag	预售	635,665,747,721	true	false	NODE
+cn.damai:id/project_detail_perform_price_flowlayout		74,978,1147,1778	true	false	NODE
+cn.damai:id/ll_perform_item		74,978,594,1146	true	false	NODE
+cn.damai:id/tv_tag	缺货登记	370,1033,552,1089	true	false	NODE
+cn.damai:id/ll_perform_item		626,978,1147,1146	true	false	NODE
+cn.damai:id/tv_tag	缺货登记	923,1033,1105,1089	true	false	NODE
+cn.damai:id/ll_perform_item		74,1178,595,1346	true	false	NODE
+cn.damai:id/tv_tag	缺货登记	371,1233,553,1289	true	false	NODE
+cn.damai:id/ll_perform_item		627,1178,976,1346	true	false	NODE
+cn.damai:id/ll_perform_item		74,1378,616,1546	true	false	NODE
+cn.damai:id/tv_tag	缺货登记	392,1433,574,1489	true	false	NODE
+cn.damai:id/ll_perform_item		74,1578,618,1746	true	false	NODE
+cn.damai:id/tv_tag	缺货登记	394,1633,576,1689	true	false	NODE
+	杭州•EvolutionNicLive谢霆锋进化演唱会	189,193,1163,246	true	false	OCR
+	场次 场次时间均为演出当地时间	76,302,713,359	true	false	OCR
+	2026-11-14 周六19:00	113,471,624,520	true	false	OCR
+	无票	668,475,741,516	true	false	OCR
+	2026-11-15周日19:00	113,669,604,717	true	false	OCR
+	预售	652,673,725,713	true	false	OCR
+	票档	68,886,189,951	true	false	OCR
+	看台380元	112,1033,351,1091	true	false	OCR
+	缺货登记	386,1043,531,1080	true	false	OCR
+	看台580元	664,1034,906,1090	true	false	OCR
+	缺货登记	938,1043,1079,1080	true	false	OCR
+	看台780元	112,1231,355,1292	true	false	OCR
+	缺货登记	390,1241,531,1281	true	false	OCR
+	看台980元	668,1235,906,1291	true	false	OCR
+	内场1380元	116,1433,375,1488	true	false	OCR
+	缺货登记	411,1442,552,1479	true	false	OCR
+	内场1680元 缺货登记	117,1640,552,1688	true	false	OCR
