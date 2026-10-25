@@ -1,4 +1,15 @@
-# v0.1 integration contract
+# Integration contract
+
+## v0.1.11 optional AI assistance
+
+The Android app now declares INTERNET for explicit, opt-in HTTPS Chat Completions requests. Native monitoring, OCR, stock decisions and input remain local and do not depend on AI. The model may propose an editable configuration draft. Only explicit user review and save can persist it, paused and pending a fresh real-app catalog verification. The model cannot dispatch taps, authorize orders or resume monitoring.
+
+AiAssistantActivity provides four advisory topics, a frozen redacted request preview, explicit send, cancellation, bounded usage and manually reviewed local learning notes. Keys and settings are encrypted with Android Keystore in noBackup storage, never exported or logged. Context is curated public task/catalog plus bounded dated decision/tier summaries, never screenshots, full node trees or account/order details. Notes and model outputs are unverified data, not executable rules. Live provider verification remains separate from unit/build/device UI checks.
+
+## Original v0.1 contract (historical)
+
+The following initial design is retained as history. Its no-INTERNET statement describes v0.1, not the optional network client introduced in v0.1.11. Current order safeguards and test evidence take precedence over this early scope description.
+
 Native Android Java 17 app package cn.local.tickethelper, minSdk30 target/compile35, AGP8.9.2, Gradle8.11.1. Native Activity UI, no Compose/AppCompat. Bundled ML Kit Chinese OCR dependency16.0.1. No INTERNET permission and no remote model.
 Core owner defines core/*.java + unit tests; notify other owners of final signatures promptly.
 UI owner owns MainActivity.java and AppStore.java (preferences, bounded sanitized audit JSONL internal storage, notification setup helpers optional). MainActivity uses android.app.Activity. Buttons: save, accessibility settings, notification permission, arm start, stop, export logs ACTION_CREATE_DOCUMENT, open Damai. Full configurable event keyword, city, date YYYY-MM-DD, time HH:mm, prices CSV, quantity (v0.1 only1), maxTotal yuan, deadline ISO offset, interval range (>=3000ms), mode ALERT or PREPARE. No prefilled real viewer or historical event. Explain PREPARE reaches confirmation page, final submit/payment manual in this build. Store no screenshots/IDs. No private APIs or risk bypass. Add persistent status and last evidence metrics display.

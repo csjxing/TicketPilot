@@ -84,6 +84,35 @@ public final class AppStore {
     }
 
     public long getConfigRevision() { return prefs.getLong("config_revision", 0); }
+    /** Explicitly accepted AI draft; incomplete targets are allowed but can never start until re-read. */
+    public boolean saveAiDraft(MonitorConfig config) {
+        if (config == null || config.quantity != 1 || config.mode == MonitorConfig.Mode.LOCK_ORDER
+                || config.eventKeyword.length() < 2 || config.eventKeyword.length() > 120
+                || config.prices.size() > 20 || config.maxTotal < 0 || config.maxTotal > 100000)
+            throw new IllegalArgumentException("Invalid AI draft");
+        JSONArray prices = new JSONArray();
+        for (Integer price : config.prices) {
+            if (price == null || price < 1 || price > 100000) throw new IllegalArgumentException("Invalid draft price");
+            prices.put(price);
+        }
+        synchronized (LOCK) {
+            boolean saved = prefs.edit().putString("event", config.eventKeyword).putString("city", config.city)
+                    .putString("date", config.date).putString("time", config.time)
+                    .putString("prices", prices.toString()).putInt("quantity", 1).putInt("maxTotal", config.maxTotal)
+                    .putString("deadline", config.deadline == null ? "" : config.deadline.toString())
+                    .putLong("minIntervalMs", config.minIntervalMs).putLong("maxIntervalMs", config.maxIntervalMs)
+                    .putString("mode", config.mode.name()).putBoolean("armed", false)
+                    .putBoolean("imported_target_pending_review", true)
+                    .putString("viewer_display_name", "").putString("viewer_document_suffix", "")
+                    .putLong("config_revision", prefs.getLong("config_revision", 0) + 1).commit();
+            if (saved) {
+                catalogDisplay.edit().clear().apply();
+                CatalogStore.update("IDLE", "AI 需求已保存为草稿，请从大麦读取真实演出和场次。", config.eventKeyword,
+                        null, null, List.of(), List.of(), List.of(), 0);
+            }
+            return saved;
+        }
+    }
     /** Imported targets remain drafts until selected again from the real app on this phone. */
     public boolean isImportedTargetPendingReview() { return prefs.getBoolean("imported_target_pending_review", false); }
     /** Only call after applying a freshly read Catalog target, never after merely editing fields. */

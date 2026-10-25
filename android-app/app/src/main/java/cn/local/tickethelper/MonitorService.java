@@ -25,6 +25,8 @@ import cn.local.tickethelper.core.DecisionEngine;
 import cn.local.tickethelper.core.MonitorConfig;
 import cn.local.tickethelper.core.Observation;
 import cn.local.tickethelper.core.UiItem;
+import cn.local.tickethelper.ai.AiContextRepository;
+import cn.local.tickethelper.ai.AiPageSummary;
 import cn.local.tickethelper.checkout.CheckoutDecision;
 import cn.local.tickethelper.checkout.CheckoutObservation;
 import cn.local.tickethelper.checkout.LockAuthorization;
@@ -58,6 +60,9 @@ public final class MonitorService extends AccessibilityService {
     private long viewerSelectionAt;
     private AppStore store;
     private OcrReader ocr;
+    private OcrReader aiPageReader;
+    private long aiReadToken;
+    private Runnable aiReadWait;
     private MonitorConfig config;
     private ShizukuInputBridge inputBridge;
     private CatalogController catalog;
@@ -79,6 +84,7 @@ public final class MonitorService extends AccessibilityService {
 
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
+        cancelAiPageRead();
         boolean wasRunning = running;
         invalidateOrderAuthorization();
         // Android may reconnect the same Service object. Invalidate callbacks before replacing readers.
@@ -107,15 +113,70 @@ public final class MonitorService extends AccessibilityService {
     }
 
     public boolean isRunning() { return running; }
+    /** One explicit read only. No network, navigation, clicks or model invocation. */
+    public boolean requestAiPageRead() {
+        if (store == null) return false;
+        pause("正在读取公开页面摘要，监控保持暂停。");
+        CatalogController.cancel(this);
+        cancelAiPageRead();
+        AiContextRepository.captureWaiting();
+        long token = ++aiReadToken, until = SystemClock.elapsedRealtime() + 25_000;
+        aiReadWait = () -> readAiPageWhenReady(token, until);
+        handler.post(aiReadWait);
+        return true;
+    }
+    private void cancelAiPageRead() {
+        aiReadToken++;
+        if (aiReadWait != null) { handler.removeCallbacks(aiReadWait); aiReadWait = null; }
+        if (aiPageReader != null) { aiPageReader.close(); aiPageReader = null; }
+    }
+    private void readAiPageWhenReady(long token, long until) {
+        if (token != aiReadToken) return;
+        if (!unlocked() || running || SystemClock.elapsedRealtime() >= until) {
+            AiContextRepository.captureFailed("本次页面读取已结束：请解锁后重新读取，并在25秒内切回大麦。");
+            cancelAiPageRead(); return;
+        }
+        if (!TARGET.equals(foreground())) { handler.postDelayed(aiReadWait, 600); return; }
+        List<UiItem> nodes = readNodes();
+        long at = System.currentTimeMillis(), pageToken = windowGeneration;
+        Observation initial = new Observation(TARGET, nodes, at);
+        String summary = AiPageSummary.summarize(initial);
+        if (summary.startsWith("页面类型：账号") || summary.startsWith("页面类型：系统")) {
+            AiContextRepository.recordPage(initial); cancelAiPageRead(); return;
+        }
+        aiPageReader = new OcrReader(this);
+        aiPageReader.read(nodes, at, (items, evidence, error) -> {
+            if (token != aiReadToken) return;
+            if (!unlocked() || running || !TARGET.equals(foreground()) || pageToken != windowGeneration
+                    || SystemClock.elapsedRealtime() >= until) {
+                AiContextRepository.captureFailed("页面在读取时发生变化，未保存摘要；请停留在目标页重读。");
+            } else if (error != null) {
+                // Node-only public projection is still useful, but never fill missing visual labels.
+                AiContextRepository.recordPage(initial);
+            } else {
+                List<UiItem> merged = new ArrayList<>(nodes); merged.addAll(items);
+                AiContextRepository.recordPage(new Observation(TARGET, merged, at, evidence));
+            }
+            cancelAiPageRead();
+        });
+        aiReadWait = () -> {
+            if (token == aiReadToken) {
+                AiContextRepository.captureFailed("页面读取超时，库存仍未知。请回助手重新尝试。"); cancelAiPageRead();
+            }
+        };
+        handler.postDelayed(aiReadWait, Math.max(1, until - SystemClock.elapsedRealtime()));
+    }
     CatalogController catalogController() { return catalog; }
     List<UiItem> catalogReadNodes() { return readNodes(); }
     long catalogWindowGeneration() { return windowGeneration; }
 
     public void arm() {
+        cancelAiPageRead();
         armInternal(null);
     }
 
     public void armForOrder(LockAuthorization authorization) {
+        cancelAiPageRead();
         armInternal(authorization);
     }
 
@@ -180,6 +241,7 @@ public final class MonitorService extends AccessibilityService {
     public void pause(String reason) { stop(reason, "PAUSED", "user_paused", false); }
 
     private void stop(String message, String state, String reason, boolean alert) {
+        cancelAiPageRead();
         running = false; busy = false; generation++; engine.reset(); handler.removeCallbacks(tick);
         if (inputBridge != null) inputBridge.cancelPending();
         invalidateOrderAuthorization();
@@ -314,6 +376,7 @@ public final class MonitorService extends AccessibilityService {
                         int nodeCount, int ocrCount, boolean usedOcr) {
         if (token != generation) return;
         if (!valid(token, pageToken)) { busy = false; schedule(700); return; }
+        AiContextRepository.recordDecision(decision);
         store.appendObservation(decision.state.name(), decision.reason, SystemClock.elapsedRealtime() - began,
                 nodeCount, ocrCount, usedOcr);
         if (transitionAction != Decision.Action.NONE && decision.state != Decision.State.CHECKOUT
@@ -897,6 +960,7 @@ public final class MonitorService extends AccessibilityService {
     }
 
     @Override public void onDestroy() {
+        cancelAiPageRead();
         pause("服务已断开，任务停止；重新连接后需手动开始。");
         releaseConnectionResources();
         if (instance == this) instance = null;

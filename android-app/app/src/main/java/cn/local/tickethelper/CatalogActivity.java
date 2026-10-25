@@ -104,8 +104,8 @@ public final class CatalogActivity extends Activity {
         if (searchInput != null) queryDraft = searchInput.getText().toString();
         shown = snapshot; page.removeAllViews(); applyButton = null; selectionHint = null; searchInput = null;
         page.addView(button("‹ 返回任务", false, v -> returnToHelper(false)), spaced(0));
-        addText(page, "选择演出", 28, TEXT, true, 18);
-        addText(page, "从真实大麦读取，选好后保存到助手。", 14, MUTED, false, 6);
+        addText(page, "选演出和场次", 28, TEXT, true, 18);
+        addText(page, "点选实际读到的选项，不用手填日期和票价。", 14, MUTED, false, 6);
         renderSteps(snapshot);
 
         boolean idle = "IDLE".equals(snapshot.stage);
@@ -142,7 +142,11 @@ public final class CatalogActivity extends Activity {
 
         if (!busy) renderSearch(snapshot, idle || blocked || searchExpanded);
         addText(page, "保存演出不会开始监控，也不会创建订单。", 12, MUTED, false, 20);
-        page.addView(button("查看选演出说明", false, v -> openSelectionHelp()), spaced(10));
+        if (!busy && !idle) page.addView(button("让 AI 帮我比较这些选项", false, v -> {
+            startActivity(new Intent(this, AiAssistantActivity.class).putExtra("topic",
+                    "TIERS".equals(snapshot.stage) ? "票档解释" : "场次比较"));
+        }), spaced(10));
+        page.addView(button("不清楚怎么选？", false, v -> openSelectionHelp()), spaced(10));
     }
 
     private void renderSteps(CatalogStore.Snapshot snapshot) {
@@ -227,12 +231,14 @@ public final class CatalogActivity extends Activity {
     }
 
     private void renderSessions(CatalogStore.Snapshot snapshot) {
-        addText(page, "选择演出日期", 17, TEXT, true, 20);
+        addText(page, "哪一天方便？", 17, TEXT, true, 20);
         for (CatalogSession session : snapshot.sessions) {
             LinearLayout row = card();
-            addText(row, session.label, 16, TEXT, true, 0);
-            addText(row, "日期：" + missing(session.date) + "  时间：" + missing(session.time), 12, MUTED, false, 6);
-            row.addView(button("选这个时间，查看票价", true,
+            String dateLabel = session.label;
+            try { dateLabel = LocalDate.parse(session.date).format(DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINA)) + "  " + session.time; }
+            catch (RuntimeException ignored) { }
+            addText(row, dateLabel, 18, TEXT, true, 0);
+            row.addView(button("选这场", true,
                     v -> returnToDamai(() -> CatalogController.selectSession(this, session.key))), spaced(12));
         }
         if (snapshot.sessions.isEmpty()) addText(page, "未读到场次。请在大麦展开日期后重新读取，不会按当前年份补全。", 13, MUTED, false, 12);
@@ -248,6 +254,13 @@ public final class CatalogActivity extends Activity {
         LinearLayout choices = card();
         addText(choices, "哪些票价可以接受？", 18, TEXT, true, 0);
         addText(choices, "可以多选；缺货票档也能作为监控目标。选中这里只会保存偏好。", 12, MUTED, false, 7);
+        LinearLayout quick = new LinearLayout(this); quick.setOrientation(LinearLayout.HORIZONTAL);
+        quick.addView(button("全选", false, v -> {
+            for (CatalogTier tier : snapshot.tiers) if (tier.price > 0) selectedTierKeys.add(tier.key);
+            render(snapshot);
+        }), new LinearLayout.LayoutParams(0, -2, 1));
+        quick.addView(button("清空", false, v -> { selectedTierKeys.clear(); render(snapshot); }), new LinearLayout.LayoutParams(0, -2, 1));
+        choices.addView(quick, spaced(10));
         for (CatalogTier tier : snapshot.tiers) {
             CheckBox choice = new CheckBox(this);
             choice.setText(tier.label + "\n" + availabilityLabel(tier.availability));
