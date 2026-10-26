@@ -99,7 +99,13 @@ public final class MonitorService extends AccessibilityService {
         inputBridge = ShizukuInputBridge.get(this);
         catalog = new CatalogController(this);
         // Reconnection never resumes a task without a new deliberate user start.
-        store.setArmed(false); store.setStatus("无障碍已连接；请设置目标并主动开始。");
+        if (wasRunning || store.isArmed()) {
+            store.recordMonitorStop("连接已恢复，前次任务已暂停；请核对后重新开始。", "BLOCKED", false, true);
+        } else {
+            store.setArmed(false);
+            if (store.getMonitorStopState() == cn.local.tickethelper.core.MonitorStopState.NONE)
+                store.setStatus("无障碍已连接；请设置目标并主动开始。");
+        }
         if (wasRunning) store.appendEvent("PAUSED", "service_reconnected", 0);
         NotificationManager notifications = getSystemService(NotificationManager.class);
         notifications.cancel(10);
@@ -242,6 +248,7 @@ public final class MonitorService extends AccessibilityService {
     public void pause(String reason) { stop(reason, "PAUSED", "user_paused", false); }
 
     private void stop(String message, String state, String reason, boolean alert) {
+        boolean wasRunning = running;
         cancelAiPageRead();
         running = false; busy = false; generation++; engine.reset(); handler.removeCallbacks(tick);
         if (inputBridge != null) inputBridge.cancelPending();
@@ -249,7 +256,7 @@ public final class MonitorService extends AccessibilityService {
         scheduledAt = 0;
         if (watchdog != null) { handler.removeCallbacks(watchdog); watchdog = null; }
         if (store == null) return;
-        store.setArmed(false); store.setStatus(message); store.appendEvent(state, reason, 0);
+        store.recordMonitorStop(message, state, alert, wasRunning); store.appendEvent(state, reason, 0);
         getSystemService(NotificationManager.class).cancel(10);
         getSystemService(NotificationManager.class).cancel(12);
         if (alert) notifyUser(message);

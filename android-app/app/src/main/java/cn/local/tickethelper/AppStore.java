@@ -3,6 +3,7 @@ package cn.local.tickethelper;
 import android.content.Context;
 import android.content.SharedPreferences;
 import cn.local.tickethelper.core.MonitorConfig;
+import cn.local.tickethelper.core.MonitorStopState;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
@@ -171,7 +172,41 @@ public final class AppStore {
     public void setStatus(String status) { prefs.edit().putString("status", clean(status, 240)).apply(); }
     public String getStatus() { return prefs.getString("status", "尚未启动；请配置目标演出并开启无障碍服务。"); }
     public boolean isArmed() { return prefs.getBoolean("armed", false); }
-    public void setArmed(boolean armed) { prefs.edit().putBoolean("armed", armed).apply(); }
+    public void setArmed(boolean armed) {
+        SharedPreferences.Editor edit = prefs.edit().putBoolean("armed", armed);
+        if (armed) edit.remove("monitor_stop_state").remove("monitor_stop_revision").remove("monitor_stop_detail");
+        edit.apply();
+    }
+
+    /** Navigation only: callers must never interpret this as fresh inventory/order evidence. */
+    public MonitorStopState getMonitorStopState() {
+        return MonitorStopState.restore(prefs.getString("monitor_stop_state", ""),
+                prefs.getLong("monitor_stop_revision", -1), getConfigRevision());
+    }
+
+    /** The original stop explanation survives later navigation/status updates. */
+    public String getMonitorStopDetail() {
+        if (getMonitorStopState() == MonitorStopState.NONE) return "";
+        return prefs.getString("monitor_stop_detail", "任务已停止，请核对大麦页面后再继续。");
+    }
+
+    /** Store the service's explicit stop event atomically with its readable message. */
+    public void recordMonitorStop(String message, String event, boolean alert, boolean wasRunning) {
+        synchronized (LOCK) {
+            MonitorStopState previous = getMonitorStopState();
+            MonitorStopState requested = MonitorStopState.fromStopEvent(event, alert);
+            MonitorStopState next = MonitorStopState.afterStop(previous, requested, wasRunning);
+            SharedPreferences.Editor edit = prefs.edit().putBoolean("armed", false)
+                    .putString("monitor_stop_state", next.name())
+                    .putLong("monitor_stop_revision", getConfigRevision());
+            // Merely opening a helper screen must preserve the actionable problem description.
+            if (next == requested || previous == MonitorStopState.NONE) {
+                String detail = clean(message, 240);
+                edit.putString("status", detail).putString("monitor_stop_detail", detail);
+            }
+            edit.apply();
+        }
+    }
     /** Old installs and unrecognized settings always use the default accessibility input. */
     public String getInputMode() {
         if (prefs.getInt("input_mode_version", 0) != INPUT_MODE_VERSION) return INPUT_ACCESSIBILITY;

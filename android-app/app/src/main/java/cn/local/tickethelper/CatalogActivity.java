@@ -16,6 +16,7 @@ import android.text.Editable;
 import android.text.InputType;
 import android.text.TextWatcher;
 import android.view.View;
+import android.view.Gravity;
 import android.view.WindowInsets;
 import android.view.WindowManager;
 import android.view.inputmethod.InputMethodManager;
@@ -30,6 +31,7 @@ import cn.local.tickethelper.catalog.CatalogProject;
 import cn.local.tickethelper.catalog.CatalogSession;
 import cn.local.tickethelper.catalog.CatalogTier;
 import cn.local.tickethelper.catalog.CatalogKeyword;
+import cn.local.tickethelper.catalog.CatalogGuidance;
 import cn.local.tickethelper.core.MonitorConfig;
 import java.text.Normalizer;
 import java.time.Instant;
@@ -45,15 +47,17 @@ import java.util.Locale;
 /** User-directed selection of public labels from the real Damai UI. Never starts monitoring. */
 public final class CatalogActivity extends Activity {
     public static final String EXTRA_APPLIED = "cn.local.tickethelper.CATALOG_APPLIED";
+    public static final String EXTRA_SEARCH_QUERY = "search_query";
     private static final String DISPLAY_PREFS = "catalog_target_display";
     private static final ZoneId VENUE_ZONE = ZoneId.of("Asia/Shanghai");
-    private static final int BG = Color.rgb(245, 246, 248), CARD = Color.WHITE;
-    private static final int TEXT = Color.rgb(23, 38, 53), MUTED = Color.rgb(88, 101, 117);
-    private static final int ACCENT = Color.rgb(23, 107, 91), BORDER = Color.rgb(222, 228, 234);
+    private static final int BG = Color.rgb(247, 248, 252), CARD = Color.WHITE;
+    private static final int TEXT = Color.rgb(24, 33, 58), MUTED = Color.rgb(102, 113, 138);
+    private static final int ACCENT = Color.rgb(61, 90, 254), TINT = Color.rgb(238, 241, 255), BORDER = Color.rgb(228, 232, 242);
     private static final int ERROR = Color.rgb(169, 54, 54);
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final LinkedHashSet<String> selectedTierKeys = new LinkedHashSet<>();
-    private LinearLayout page, footer;
+    private LinearLayout page, footer, progressTrack;
+    private TextView headerStep;
     private ScrollView contentScroll;
     private EditText searchInput;
     private TextView selectionHint;
@@ -94,10 +98,19 @@ public final class CatalogActivity extends Activity {
             queryDraft = CatalogStore.get().query;
             if (queryDraft.isEmpty()) queryDraft = new AppStore(this).loadConfig().eventKeyword;
         }
+        if (state == null) readIncomingSearch(getIntent());
         LinearLayout shell = column(); shell.setBackgroundColor(BG);
+        LinearLayout header = row(); header.setPadding(dp(14), dp(4), dp(20), dp(4));
+        Button back = link("‹", v -> goBack()); back.setTextSize(28); back.setContentDescription("返回上一步");
+        header.addView(back, new LinearLayout.LayoutParams(dp(42), dp(48)));
+        TextView headerTitle = text("添加购票计划", 16, TEXT, true);
+        header.addView(headerTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        headerStep = text("1 / 4", 13, MUTED, false); header.addView(headerStep);
+        shell.addView(header);
+        progressTrack = row(); progressTrack.setPadding(dp(20), dp(0), dp(20), dp(0)); shell.addView(progressTrack);
         ScrollView scroll = new ScrollView(this); contentScroll = scroll;
         scroll.setBackgroundColor(BG); scroll.setFillViewport(true);
-        page = column(); page.setPadding(dp(20), dp(8), dp(20), dp(24));
+        page = column(); page.setPadding(dp(22), dp(4), dp(22), dp(24));
         scroll.addView(page);
         shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
         footer = column(); footer.setPadding(dp(20), dp(12), dp(20), dp(14));
@@ -113,7 +126,17 @@ public final class CatalogActivity extends Activity {
     }
 
     @Override protected void onNewIntent(Intent intent) {
-        super.onNewIntent(intent); setIntent(intent); render(CatalogStore.get());
+        super.onNewIntent(intent); setIntent(intent);
+        if (searchInput != null) queryDraft = searchInput.getText().toString();
+        searchInput = null; readIncomingSearch(intent); render(CatalogStore.get());
+    }
+
+    private void readIncomingSearch(Intent intent) {
+        if (!intent.hasExtra(EXTRA_SEARCH_QUERY)) return;
+        queryDraft = safe(intent.getStringExtra(EXTRA_SEARCH_QUERY));
+        intent.removeExtra(EXTRA_SEARCH_QUERY);
+        CatalogController.cancel(this);
+        searchExpanded = true; reviewRequested = false;
     }
 
     private void render(CatalogStore.Snapshot snapshot) {
@@ -126,30 +149,20 @@ public final class CatalogActivity extends Activity {
         shown = snapshot; page.removeAllViews(); footer.removeAllViews();
         applyButton = null; selectionHint = null; searchInput = null;
         boolean idle = "IDLE".equals(snapshot.stage), busy = "BUSY".equals(snapshot.stage);
-        boolean blocked = "BLOCKED".equals(snapshot.stage), searching = idle || searchExpanded;
-        page.addView(link(reviewRequested ? "‹ 修改票价" : searching && !idle ? "‹ 返回选择" : "‹ 返回",
-                v -> goBack()), spaced(0));
+        boolean blocked = "BLOCKED".equals(snapshot.stage), searching = !busy && (idle || searchExpanded);
         renderSteps(snapshot, searching);
-        String heading = reviewRequested ? "核对你的选择"
-                : searching ? "想看谁的演出？" : "PROJECTS".equals(snapshot.stage) ? "选择演出和城市"
-                : "SESSIONS".equals(snapshot.stage) ? "选一个方便的时间" : "TIERS".equals(snapshot.stage) ? "哪些票价都可以？"
-                : busy ? "去大麦，继续这一步" : "这一步需要处理";
-        addText(page, heading, 26, TEXT, true, 18);
-        String subheading = reviewRequested ? "核对后保存，再设置有票时怎么做。"
-                : searching ? "输入艺人或演出名，也可以加上城市。"
-                : "PROJECTS".equals(snapshot.stage) ? "点选一项，再查看这场演出的场次。"
-                : "SESSIONS".equals(snapshot.stage) ? "日期和时间来自刚才的大麦页面。"
-                : "TIERS".equals(snapshot.stage) ? "可以多选。缺货票价也能关注回流。" : "";
-        if (!subheading.isEmpty()) addText(page, subheading, 14, MUTED, false, 7);
-        if (!searching && !reviewRequested && snapshot.event != null && !busy && !blocked) {
-            LinearLayout chosen = column(); chosen.setPadding(dp(13), dp(12), dp(13), dp(12));
-            chosen.setBackground(shape(Color.rgb(234, 243, 240), Color.rgb(234, 243, 240)));
-            addText(chosen, snapshot.event.label, 13, TEXT, true, 0);
-            if (snapshot.session != null) addText(chosen, sessionDate(snapshot.session), 12, MUTED, false, 4);
-            if ("TIERS".equals(snapshot.stage)) chosen.addView(link("修改场次", v -> changeSession()), spaced(4));
-            page.addView(chosen, spaced(14));
-        }
-        if (!busy && !reviewRequested && !searching && !blocked) renderAiHelp(snapshot, false);
+        String heading = reviewRequested ? "这张计划，确认一下"
+                : searching ? "想去谁的现场？" : "PROJECTS".equals(snapshot.stage) ? "选对演出和城市"
+                : "SESSIONS".equals(snapshot.stage) ? "哪一天方便去？" : "TIERS".equals(snapshot.stage) ? "这些票价，你接受哪些？"
+                : busy ? CatalogGuidance.busy(snapshot.status).title : "先解决这一步";
+        addText(page, heading, 27, TEXT, true, 22);
+        String subheading = reviewRequested ? "保存后还不会运行，下一步设置购票方式。"
+                : searching ? "输入艺人或演出名，去大麦读取真实结果。"
+                : "PROJECTS".equals(snapshot.stage) ? "点选一项，下一步读取这场演出的日期。"
+                : "SESSIONS".equals(snapshot.stage) ? "点一个日期和时间，下一步选票价。"
+                : "TIERS".equals(snapshot.stage) ? "可以多选；每次只购买其中一档、1 张。" : "";
+        if (!subheading.isEmpty()) addText(page, subheading, 14, MUTED, false, 9);
+        if (!searching && !reviewRequested && snapshot.event != null && !busy && !blocked) renderSelectedStrip(snapshot);
         if (searching) renderSearch(snapshot);
         else if (reviewRequested) renderReview(snapshot);
         else if ("PROJECTS".equals(snapshot.stage)) renderProjects(snapshot);
@@ -157,18 +170,30 @@ public final class CatalogActivity extends Activity {
         else if ("TIERS".equals(snapshot.stage)) renderTiers(snapshot);
         else if (busy) renderHandoff(snapshot);
         else renderBlocked(snapshot);
-
-        if (!busy && !reviewRequested && (searching || blocked)) renderAiHelp(snapshot, searching);
+        if (!busy && !reviewRequested) renderAiHelp(snapshot, searching);
         if (!busy && !searching && !reviewRequested) {
-            page.addView(link("换个演出", v -> { searchExpanded = true; render(CatalogStore.get()); scrollTop(); }), spaced(16));
-            if (!blocked) page.addView(link("大麦已显示别的内容？重新读取", v -> captureCurrent()), spaced(2));
+            LinearLayout utilities = row();
+            utilities.addView(link("重新读取", v -> captureCurrent()), new LinearLayout.LayoutParams(0, -2, 1));
+            Button change = link("换个演出", v -> editEvent()); change.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+            utilities.addView(change, new LinearLayout.LayoutParams(0, -2, 1)); page.addView(utilities, spaced(12));
         }
-        if (!busy && !reviewRequested) page.addView(link("使用帮助", v -> openSelectionHelp()), spaced(4));
-        if (snapshot.readAtMs > 0 && !busy && !searching) {
-            addText(page, "大麦页面 · " + Instant.ofEpochMilli(snapshot.readAtMs).atZone(VENUE_ZONE)
-                    .format(DateTimeFormatter.ofPattern("HH:mm:ss")) + " 读取 · 不代表已锁票", 11, MUTED, false, 14);
-        }
+        if (snapshot.readAtMs > 0 && !busy && !searching) addText(page, "来自大麦 · " + Instant.ofEpochMilli(snapshot.readAtMs).atZone(VENUE_ZONE)
+                .format(DateTimeFormatter.ofPattern("HH:mm:ss")) + " 读取，库存仍需运行时核实", 11, MUTED, false, 10);
         if (changedStage) scrollTop();
+    }
+
+    private void renderSelectedStrip(CatalogStore.Snapshot snapshot) {
+        LinearLayout strip = column(); strip.setPadding(dp(13), dp(12), dp(13), dp(12)); strip.setBackground(shape(TINT, TINT));
+        addText(strip, snapshot.event.label, 13, TEXT, true, 0);
+        if (snapshot.session != null) {
+            addText(strip, sessionDate(snapshot.session), 12, MUTED, false, 5);
+            strip.addView(link("修改场次  ›", v -> changeSession()), spaced(1));
+        }
+        page.addView(strip, spaced(18));
+    }
+
+    private void editEvent() {
+        searchExpanded = true; reviewRequested = false; render(CatalogStore.get()); scrollTop();
     }
 
     private void scrollTop() { contentScroll.post(() -> contentScroll.scrollTo(0, 0)); }
@@ -182,21 +207,22 @@ public final class CatalogActivity extends Activity {
         int step = reviewRequested ? 4 : searching ? 1
                 : snapshot.session != null || "TIERS".equals(snapshot.stage) ? 3
                 : snapshot.event != null || "SESSIONS".equals(snapshot.stage) ? 2 : 1;
-        String[] labels = {"找演出", "选场次", "选票价", "核对"};
-        LinearLayout steps = new LinearLayout(this); steps.setOrientation(LinearLayout.HORIZONTAL);
+        headerStep.setText(step + " / 4"); progressTrack.removeAllViews();
+        String[] labels = {"演出", "场次", "票价", "核对"};
         for (int i = 0; i < labels.length; i++) {
-            TextView label = text((i + 1 < step ? "✓ " : (i + 1) + " ") + labels[i], 12,
-                    i + 1 <= step ? ACCENT : MUTED, i + 1 == step);
-            label.setPadding(dp(0), dp(10), dp(0), dp(8));
-            label.setContentDescription("第 " + (i + 1) + " 步，" + labels[i] + (i + 1 == step ? "，当前步骤" : ""));
-            steps.addView(label, new LinearLayout.LayoutParams(0, -2, 1f));
+            LinearLayout segment = column();
+            TextView title = text((i + 1 < step ? "✓ " : "") + labels[i], 11, i + 1 <= step ? ACCENT : MUTED, i + 1 == step);
+            title.setGravity(Gravity.CENTER); segment.addView(title);
+            View bar = new View(this); bar.setBackground(shape(i + 1 <= step ? ACCENT : BORDER, i + 1 <= step ? ACCENT : BORDER));
+            LinearLayout.LayoutParams barLayout = new LinearLayout.LayoutParams(-1, dp(3)); barLayout.topMargin = dp(7); segment.addView(bar, barLayout);
+            segment.setContentDescription("第 " + (i + 1) + " 步，" + labels[i] + (i + 1 == step ? "，当前步骤" : ""));
+            LinearLayout.LayoutParams item = new LinearLayout.LayoutParams(0, -2, 1); if (i > 0) item.leftMargin = dp(7); progressTrack.addView(segment, item);
         }
-        page.addView(steps, spaced(4));
     }
 
     private void primary(String title, String hint, boolean enabled, View.OnClickListener action) {
         footer.removeAllViews();
-        selectionHint = text(hint, 12, MUTED, false);
+        selectionHint = text(hint, 12, TEXT, false);
         selectionHint.setVisibility(hint.isEmpty() ? View.GONE : View.VISIBLE);
         footer.addView(selectionHint);
         applyButton = button(title, true, action); applyButton.setEnabled(enabled); applyButton.setAlpha(enabled ? 1f : 0.45f);
@@ -204,16 +230,15 @@ public final class CatalogActivity extends Activity {
     }
 
     private void renderSearch(CatalogStore.Snapshot snapshot) {
-        LinearLayout search = card();
         searchInput = new EditText(this);
         searchInput.setSingleLine(true); searchInput.setTextSize(18); searchInput.setTextColor(TEXT);
-        searchInput.setHintTextColor(MUTED); searchInput.setHint("例如：谢霆锋 杭州");
+        searchInput.setHintTextColor(MUTED); searchInput.setHint("艺人 / 演出名称，可加城市");
         searchInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
         searchInput.setImeOptions(EditorInfo.IME_ACTION_SEARCH);
         searchInput.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO);
-        searchInput.setContentDescription("艺人或演出名，可加城市");
-        searchInput.setBackground(shape(BG, BORDER)); searchInput.setPadding(dp(14), dp(14), dp(14), dp(14));
-        searchInput.setMinHeight(dp(56)); searchInput.setText(queryDraft); search.addView(searchInput);
+        searchInput.setContentDescription("演出搜索，输入艺人或演出名，可加城市");
+        searchInput.setBackground(shape(CARD, BORDER)); searchInput.setPadding(dp(16), dp(15), dp(16), dp(15));
+        searchInput.setMinHeight(dp(58)); searchInput.setText(queryDraft); page.addView(searchInput, spaced(25));
         searchInput.setOnEditorActionListener((view, actionId, event) -> {
             if (actionId != EditorInfo.IME_ACTION_SEARCH) return false;
             search(); return true;
@@ -226,20 +251,28 @@ public final class CatalogActivity extends Activity {
             }
             @Override public void afterTextChanged(Editable s) { }
         });
-        addText(search, "会打开真实大麦。读取完成后，点助手通知回来选。", 13, MUTED, false, 12);
-        page.addView(link("已经打开大麦？读取当前页", v -> captureCurrent()), spaced(10));
-        primary("在大麦搜索", "", queryDraft.trim().length() >= 2, v -> search());
+        addText(page, "例如：谢霆锋 杭州", 12, MUTED, false, 9);
+        if (!"IDLE".equals(snapshot.stage) && !"BLOCKED".equals(snapshot.stage)) {
+            page.addView(link("继续刚才的选择  ›", v -> { searchExpanded = false; render(CatalogStore.get()); scrollTop(); }), spaced(7));
+        }
+        LinearLayout reading = column(); reading.setPadding(dp(0), dp(24), dp(0), dp(12));
+        addText(reading, "已经在大麦看中一场？", 15, TEXT, true, 0);
+        reading.addView(link("直接读取当前页面  →", v -> captureCurrent()), spaced(4)); page.addView(reading);
+        primary("去大麦搜索", "读完后，点「票务助手 · 演出选择」通知回来", queryDraft.trim().length() >= 2, v -> search());
     }
 
     private void renderProjects(CatalogStore.Snapshot snapshot) {
-        for (CatalogProject project : snapshot.projects) {
+        LinearLayout results = surface();
+        for (int i = 0; i < snapshot.projects.size(); i++) {
+            CatalogProject project = snapshot.projects.get(i);
+            if (i > 0) divider(results);
             boolean selected = project.key.equals(selectedProjectKey);
-            LinearLayout option = selectableCard(project.label, safe(project.city).isEmpty() ? "城市尚未读取" : project.city,
+            LinearLayout option = selectableRow(project.label, safe(project.city).isEmpty() ? "城市尚未读取" : project.city,
                     selected, v -> { selectedProjectKey = project.key; render(snapshot); });
-            option.setContentDescription(project.label + "，" + missing(project.city) + (selected ? "，已选择" : "，点按选择"));
+            results.addView(option);
         }
-        if (snapshot.projects.isEmpty()) addText(page, "还没有读到演出。可以换个名称搜索，或在大麦展开结果后重新读取。", 14, MUTED, false, 18);
-        primary("继续，选场次", selectedProjectKey.isEmpty() ? "先点选一场演出" : "将到大麦读取所选演出的场次",
+        if (snapshot.projects.isEmpty()) emptyState("还没有找到可选演出", "换一个艺人或演出名，或在大麦展开结果后重新读取。");
+        primary("继续选场次  →", selectedProjectKey.isEmpty() ? "先点选一场演出" : "下一步：到大麦读取该演出的日期",
                 !selectedProjectKey.isEmpty(), v -> continueProject(snapshot));
     }
 
@@ -251,17 +284,31 @@ public final class CatalogActivity extends Activity {
     }
 
     private void renderSessions(CatalogStore.Snapshot snapshot) {
-        for (CatalogSession session : snapshot.sessions) {
+        LinearLayout results = surface();
+        for (int i = 0; i < snapshot.sessions.size(); i++) {
+            CatalogSession session = snapshot.sessions.get(i); if (i > 0) divider(results);
             boolean selected = session.key.equals(selectedSessionKey);
-            String date, time;
+            LinearLayout option = row(); option.setPadding(dp(13), dp(16), dp(13), dp(16));
+            option.setBackgroundColor(selected ? TINT : CARD);
+            String stamp = "日期", title = session.label, subtitle = "完整日期和时间尚待读取";
             try {
-                date = LocalDate.parse(session.date).format(DateTimeFormatter.ofPattern("M月d日 EEEE", Locale.CHINA));
-                time = session.time + " 开场 · " + LocalDate.parse(session.date).getYear() + "年";
-            } catch (RuntimeException invalid) { date = session.label; time = "完整日期和时间尚待读取"; }
-            selectableCard(date, time, selected, v -> { selectedSessionKey = session.key; render(snapshot); });
+                LocalDate date = LocalDate.parse(session.date);
+                stamp = date.getMonthValue() + "月\n" + date.getDayOfMonth();
+                title = date.format(DateTimeFormatter.ofPattern("EEEE", Locale.CHINA)) + "  " + session.time;
+                subtitle = date.format(DateTimeFormatter.ofPattern("yyyy年M月d日", Locale.CHINA)) + " · 以演出当地时间为准";
+            } catch (RuntimeException ignored) { }
+            TextView calendar = text(stamp, 16, selected ? ACCENT : TEXT, true); calendar.setGravity(Gravity.CENTER);
+            calendar.setPadding(dp(6), dp(6), dp(6), dp(6)); calendar.setBackground(shape(selected ? CARD : BG, selected ? CARD : BG));
+            option.addView(calendar, new LinearLayout.LayoutParams(dp(58), -2));
+            LinearLayout words = column(); addText(words, title, 17, TEXT, true, 0); addText(words, subtitle, 12, MUTED, false, 5);
+            LinearLayout.LayoutParams wordsLayout = new LinearLayout.LayoutParams(0, -2, 1); wordsLayout.leftMargin = dp(13); option.addView(words, wordsLayout);
+            TextView check = text(selected ? "●" : "○", 20, selected ? ACCENT : BORDER, true); option.addView(check);
+            option.setSelected(selected); option.setFocusable(true); option.setClickable(true);
+            option.setContentDescription(sessionDate(session) + (selected ? "，已选择" : "，点按选择"));
+            option.setOnClickListener(v -> { selectedSessionKey = session.key; render(snapshot); }); results.addView(option);
         }
-        if (snapshot.sessions.isEmpty()) addText(page, "还没有读到场次。请在大麦展开日期，再重新读取。", 14, MUTED, false, 18);
-        primary("继续，选票价", selectedSessionKey.isEmpty() ? "先点选一个日期和时间" : "将到大麦读取这一场的票价",
+        if (snapshot.sessions.isEmpty()) emptyState("暂时没有读到日期", "在大麦打开这场演出的场次页，再点重新读取。");
+        primary("继续选票价  →", selectedSessionKey.isEmpty() ? "先点选一个日期和时间" : "下一步：读取这一场可选择的票价",
                 !selectedSessionKey.isEmpty(), v -> continueSession(snapshot));
     }
 
@@ -279,11 +326,17 @@ public final class CatalogActivity extends Activity {
         return false;
     }
 
-    private LinearLayout selectableCard(String title, String detail, boolean selected, View.OnClickListener listener) {
-        LinearLayout option = card();
-        option.setBackground(shape(selected ? Color.rgb(232, 245, 240) : CARD, selected ? ACCENT : BORDER));
-        addText(option, (selected ? "●  " : "○  ") + title, 17, selected ? ACCENT : TEXT, true, 0);
-        if (!detail.isEmpty()) addText(option, detail, 13, MUTED, false, 7);
+    private LinearLayout selectableRow(String title, String detail, boolean selected, View.OnClickListener listener) {
+        LinearLayout option = row(); option.setPadding(dp(15), dp(18), dp(15), dp(18));
+        option.setBackgroundColor(selected ? TINT : CARD);
+        LinearLayout words = column(); addText(words, title, 17, TEXT, true, 0);
+        if (!detail.isEmpty()) {
+            TextView city = text(detail, 11, selected ? ACCENT : MUTED, true);
+            city.setPadding(dp(8), dp(4), dp(8), dp(4)); city.setBackground(shape(selected ? CARD : BG, selected ? CARD : BG));
+            LinearLayout.LayoutParams badge = new LinearLayout.LayoutParams(-2, -2); badge.topMargin = dp(8); words.addView(city, badge);
+        }
+        option.addView(words, new LinearLayout.LayoutParams(0, -2, 1));
+        TextView check = text(selected ? "●" : "○", 21, selected ? ACCENT : BORDER, true); option.addView(check);
         option.setSelected(selected); option.setFocusable(true); option.setClickable(true); option.setOnClickListener(listener);
         option.setContentDescription(title + "，" + detail + (selected ? "，已选择" : "，点按选择"));
         return option;
@@ -308,8 +361,8 @@ public final class CatalogActivity extends Activity {
             CatalogTier tier = snapshot.tiers.get(index);
             if (index % 2 == 0) { gridRow = new LinearLayout(this); gridRow.setOrientation(LinearLayout.HORIZONTAL); page.addView(gridRow, spaced(10)); }
             CheckBox choice = new CheckBox(this);
-            choice.setText(tier.label + "\n" + availabilityLabel(tier.availability));
-            choice.setTextColor(TEXT); choice.setTextSize(14); choice.setMinHeight(dp(94));
+            choice.setText("¥ " + tier.price + "\n" + tier.label + "\n" + availabilityLabel(tier.availability));
+            choice.setTextColor(TEXT); choice.setTextSize(14); choice.setMinHeight(dp(108));
             choice.setPadding(dp(9), dp(12), dp(9), dp(12));
             choice.setButtonTintList(android.content.res.ColorStateList.valueOf(ACCENT));
             choice.setEnabled(tier.price > 0); choice.setChecked(selectedTierKeys.contains(tier.key));
@@ -324,48 +377,70 @@ public final class CatalogActivity extends Activity {
         }
         if (snapshot.tiers.size() % 2 == 1 && gridRow != null) gridRow.addView(new View(this), new LinearLayout.LayoutParams(0, 1, 1f));
         if (snapshot.tiers.isEmpty()) addText(page, "还没有读到票价。请在大麦展开票档后重新读取。", 14, MUTED, false, 16);
-        primary("下一步，核对", "", false, v -> confirmSelection()); updateApplyState();
+        primary("核对这份计划  →", "", false, v -> confirmSelection()); updateApplyState();
     }
 
     private void styleTier(CheckBox choice, boolean checked) {
-        choice.setBackground(shape(checked ? Color.rgb(232, 245, 240) : CARD, checked ? ACCENT : BORDER));
+        choice.setBackground(shape(checked ? TINT : CARD, checked ? ACCENT : BORDER));
         choice.setTextColor(checked ? ACCENT : TEXT);
     }
 
     private void renderReview(CatalogStore.Snapshot snapshot) {
         List<Integer> prices = selectedPrices(snapshot); int maximum = 0;
         for (int price : prices) maximum = Math.max(maximum, price);
-        LinearLayout ticket = card();
-        addText(ticket, snapshot.event.label, 19, TEXT, true, 0);
-        addText(ticket, snapshot.event.city, 13, MUTED, false, 8);
-        summaryRow(ticket, "场次", sessionDate(snapshot.session));
-        ticket.addView(link("修改场次", v -> changeSession()), spaced(2));
-        summaryRow(ticket, "接受票价", pricesText(prices));
-        summaryRow(ticket, "张数", "1 张");
-        summaryRow(ticket, "实付不超过", "¥ " + maximum);
-        addText(ticket, "这些票价任选其一；运行至开场时间停止。", 12, MUTED, false, 14);
-        addText(page, "保存后回到首页，由你选择有票时的操作并开始。", 13, MUTED, false, 16);
-        primary("保存这场演出", "这里只保存选择，还不会开始或下单", true, v -> saveReviewedSelection());
+        LinearLayout ticket = column(); ticket.setBackground(shape(CARD, CARD)); page.addView(ticket, spaced(24));
+        LinearLayout ticketTop = column(); ticketTop.setPadding(dp(19), dp(20), dp(19), dp(20)); ticketTop.setBackground(shape(TEXT, TEXT));
+        addText(ticketTop, "TICKET PLAN  /  购票计划", 10, Color.rgb(173, 187, 220), true, 0);
+        addText(ticketTop, snapshot.event.label, 20, Color.WHITE, true, 13);
+        addText(ticketTop, snapshot.event.city, 13, Color.rgb(207, 216, 237), false, 8); ticket.addView(ticketTop);
+        LinearLayout facts = column(); facts.setPadding(dp(18), dp(8), dp(18), dp(18)); ticket.addView(facts);
+        summaryRow(facts, "场次", sessionDate(snapshot.session), "改场次", v -> changeSession());
+        divider(facts); summaryRow(facts, "接受票价", pricesText(prices), "改票价", v -> { reviewRequested = false; render(CatalogStore.get()); scrollTop(); });
+        divider(facts); summaryRow(facts, "数量", "1 张 · 其中一档", "", null);
+        divider(facts); summaryRow(facts, "实付上限", "¥ " + maximum, "", null);
+        page.addView(link("演出选错了？重新选择", v -> editEvent()), spaced(9));
+        addText(page, "下一步：回到计划页，选择有票后的动作，再开始。", 14, TEXT, false, 14);
+        addText(page, "保存不会提交订单。只有大麦确认待付款订单，才算锁票。", 12, MUTED, false, 8);
+        primary("保存计划，继续设置  →", "所选票价任选其一，至本场开演时停止", true, v -> saveReviewedSelection());
     }
 
-    private void summaryRow(LinearLayout target, String label, String value) {
-        addText(target, label, 12, MUTED, false, 17);
-        addText(target, value, 16, TEXT, true, 4);
+    private void summaryRow(LinearLayout target, String label, String value, String action, View.OnClickListener listener) {
+        LinearLayout row = row(); row.setPadding(dp(0), dp(15), dp(0), dp(15));
+        LinearLayout words = column(); addText(words, label, 11, MUTED, false, 0); addText(words, value, 16, TEXT, true, 5);
+        row.addView(words, new LinearLayout.LayoutParams(0, -2, 1));
+        if (!action.isEmpty()) { Button edit = link(action, listener); edit.setTextSize(12); row.addView(edit, new LinearLayout.LayoutParams(dp(66), -2)); }
+        target.addView(row);
     }
 
     private void renderHandoff(CatalogStore.Snapshot snapshot) {
-        LinearLayout handoff = card();
-        addText(handoff, safe(snapshot.status).isEmpty() ? "请保持大麦在前台，助手正在读取。" : safe(snapshot.status), 16, TEXT, true, 0);
-        addText(handoff, "读取完成后，点“票务助手 · 演出选择”通知回来。", 14, MUTED, false, 12);
-        page.addView(link("取消这次读取", v -> { CatalogController.cancel(this); render(CatalogStore.get()); }), spaced(12));
-        primary("切回大麦", "保持手机解锁和亮屏", true, v -> finishAndRemoveTask());
+        CatalogGuidance guide = CatalogGuidance.busy(snapshot.status);
+        LinearLayout instruction = column(); instruction.setPadding(dp(18), dp(20), dp(18), dp(20)); instruction.setBackground(shape(TEXT, TEXT));
+        addText(instruction, "现在请这样做", 11, Color.rgb(173, 187, 220), true, 0);
+        addText(instruction, guide.instruction, 20, Color.WHITE, true, 12);
+        addText(instruction, guide.after, 14, Color.rgb(207, 216, 237), false, 14); page.addView(instruction, spaced(24));
+        addText(page, "返回方式", 12, MUTED, true, 24);
+        addText(page, "看到「票务助手 · 演出选择」通知后，点通知回这里继续。", 15, TEXT, false, 7);
+        page.addView(link("查看当前读取状态", v -> showMessage("当前进度", safe(snapshot.status))), spaced(10));
+        page.addView(link("停止这次读取", v -> { CatalogController.cancel(this); render(CatalogStore.get()); }), spaced(6));
+        primary(guide.button, "收起后用最近任务切回大麦，保持解锁和亮屏", true, v -> finishAndRemoveTask());
     }
 
     private void renderBlocked(CatalogStore.Snapshot snapshot) {
-        LinearLayout problem = card();
-        addText(problem, safe(snapshot.status).isEmpty() ? "没有读到完整信息，请打开大麦后再试。" : safe(snapshot.status), 15, ERROR, true, 0);
-        addText(problem, "之前保存的演出没有改变。", 13, MUTED, false, 10);
-        primary("重新读取大麦", "先在大麦处理提示，再打开需要读取的页面", true, v -> captureCurrent());
+        LinearLayout instruction = column(); instruction.setPadding(dp(18), dp(18), dp(18), dp(18));
+        instruction.setBackground(shape(Color.rgb(255, 243, 235), Color.rgb(255, 243, 235)));
+        addText(instruction, "这次读取已停止", 12, ERROR, true, 0);
+        addText(instruction, safe(snapshot.status).isEmpty() ? "没有读到完整信息，请在大麦打开演出详情或票档页。" : safe(snapshot.status), 16, TEXT, true, 9);
+        addText(instruction, "之前保存的计划没有改变。", 12, MUTED, false, 12); page.addView(instruction, spaced(24));
+        boolean setup = safe(snapshot.status).contains("无障碍") || safe(snapshot.status).contains("通知");
+        primary(setup ? "去完成手机准备  →" : "处理好了，重新读取  →",
+                setup ? "完成必要设置后再回来读取" : "先在大麦处理页面提示，然后再试一次", true,
+                v -> { if (setup) returnToSetup(); else captureCurrent(); });
+    }
+
+    private void returnToSetup() {
+        CatalogController.cancel(this);
+        startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
+                .putExtra("route", "setup")); finishAndRemoveTask();
     }
 
     private void captureCurrent() {
@@ -375,31 +450,31 @@ public final class CatalogActivity extends Activity {
 
     private void changeSession() {
         new AlertDialog.Builder(this).setTitle("重新选择场次")
-                .setMessage("请保持大麦打开这场演出的场次票价页。继续后切回大麦，读取完成再点助手通知回来选日期。")
+                .setMessage("下一步会重新读取大麦中的日期。请在大麦保持这场演出的场次页打开；读取后点助手通知回来选日期。当前已保存的计划不会改变。")
                 .setNegativeButton("暂不修改", null)
-                .setPositiveButton("读取场次", (dialog, which) -> captureCurrent()).show();
+                .setPositiveButton("重新读取场次", (dialog, which) -> captureCurrent()).show();
     }
 
     private void renderAiHelp(CatalogStore.Snapshot snapshot, boolean searching) {
         String topic, label, prompt;
         if ("BLOCKED".equals(snapshot.stage) && !searching) {
-            topic = "异常分析"; label = "AI 帮我解决这一步";
+            topic = "异常分析"; label = "让领航员解释这一步";
             prompt = "我在选择演出时遇到了问题，页面提示：" + safe(snapshot.status) + "。请告诉我最可能的原因和下一步该点哪里；不能确定的部分请说明。";
         } else if ("TIERS".equals(snapshot.stage) && !searching) {
-            topic = "票档解释"; label = "拿不准票价？让 AI 帮你比较";
+            topic = "票档解释"; label = "让领航员帮我选票价";
             prompt = "请帮我理解刚读到的票价和缺货标记，说明如何按预算选择。不要把可见票价当成有票，也不要编造视野或座位信息。";
         } else if ("SESSIONS".equals(snapshot.stage) && !searching) {
-            topic = "场次比较"; label = "AI 帮我比较这些场次";
+            topic = "场次比较"; label = "让领航员帮我选日期";
             prompt = "请比较刚读到的演出场次，把日期、星期和时间列清楚。如果需要我的出行偏好，问一个简单的问题。";
         } else {
-            topic = "配置建议"; label = searching ? "还没想好？AI 帮你整理需求" : "AI 帮我比较这些演出";
+            topic = "配置建议"; label = searching ? "让领航员帮我理清需求" : "让领航员帮我看这些演出";
             prompt = searching ? "请帮我整理想看的演出、城市、日期和预算。先问我一个最必要的问题，不要虚构演出或库存。"
                     : "请根据刚从大麦读到的公开演出结果，帮助我比较城市和项目；不要虚构未读到的场次或库存。";
         }
         final String selectedTopic = topic, selectedPrompt = prompt;
-        LinearLayout ai = column(); ai.setPadding(dp(14), dp(10), dp(14), dp(10));
-        ai.setBackground(shape(Color.rgb(234, 243, 240), Color.rgb(214, 232, 225)));
-        ai.addView(link(label + "  ›", v -> {
+        LinearLayout ai = column();
+        divider(ai);
+        ai.addView(link("✦  " + label + "  ›", v -> {
             if (!isCurrent(snapshot)) return;
             String promptAtClick = selectedPrompt;
             if (searching) {
@@ -407,9 +482,12 @@ public final class CatalogActivity extends Activity {
                 if (!currentQuery.isEmpty()) promptAtClick = "我想搜索：" + currentQuery + "。" + promptAtClick;
             }
             startActivity(new Intent(this, AiAssistantActivity.class)
-                    .putExtra("topic", selectedTopic).putExtra("question", promptAtClick).putExtra("origin_label", "选择演出"));
+                    .putExtra("has_issue", "BLOCKED".equals(snapshot.stage))
+                    .putExtra("topic", selectedTopic).putExtra("question", promptAtClick)
+                    .putExtra("origin_label", "TIERS".equals(snapshot.stage) && !searching ? "选择票价"
+                            : "SESSIONS".equals(snapshot.stage) && !searching ? "选择场次" : "选择演出"));
         }));
-        page.addView(ai, spaced(18));
+        page.addView(ai, spaced(20));
     }
 
     private void openSelectionHelp() {
@@ -514,7 +592,7 @@ public final class CatalogActivity extends Activity {
         CatalogController.cancel(this);
         AppStore store = new AppStore(this);
         store.setArmed(false); store.saveConfig(proposed);
-        store.setStatus("演出已保存，还没有开始监控。请回首页核对后开始。");
+        store.setStatus("计划已保存。下一步选择有票后的动作，再由你开始。");
         NotificationManager notifications = getSystemService(NotificationManager.class);
         if (notifications != null) notifications.cancel(12);
         getSharedPreferences(DISPLAY_PREFS, MODE_PRIVATE).edit().putString("title", snapshot.event.label)
@@ -543,8 +621,14 @@ public final class CatalogActivity extends Activity {
     }
 
     private void goBack() {
-        if (reviewRequested) { reviewRequested = false; render(CatalogStore.get()); scrollTop(); }
-        else if (searchExpanded && !"IDLE".equals(CatalogStore.get().stage)) { searchExpanded = false; render(CatalogStore.get()); scrollTop(); }
+        CatalogStore.Snapshot current = CatalogStore.get();
+        if (reviewRequested) { reviewRequested = false; render(current); scrollTop(); }
+        else if (searchExpanded) returnToHelper(false);
+        else if ("TIERS".equals(current.stage)) changeSession();
+        else if ("PROJECTS".equals(current.stage) || "SESSIONS".equals(current.stage)) editEvent();
+        else if ("BUSY".equals(current.stage)) new AlertDialog.Builder(this).setTitle("停止这次读取？")
+                .setMessage("返回计划页会停止当前读取，已保存的演出不变。")
+                .setNegativeButton("继续等待", null).setPositiveButton("停止并返回", (d, w) -> returnToHelper(false)).show();
         else returnToHelper(false);
     }
     @Override public void onBackPressed() { goBack(); }
@@ -581,16 +665,19 @@ public final class CatalogActivity extends Activity {
         return "库存待核实";
     }
     private LinearLayout column() { LinearLayout v = new LinearLayout(this); v.setOrientation(LinearLayout.VERTICAL); return v; }
-    private LinearLayout card() { LinearLayout v = column(); v.setPadding(dp(16), dp(17), dp(16), dp(17)); v.setBackground(shape(CARD, BORDER)); page.addView(v, spaced(16)); return v; }
+    private LinearLayout row() { LinearLayout v = new LinearLayout(this); v.setOrientation(LinearLayout.HORIZONTAL); v.setGravity(Gravity.CENTER_VERTICAL); return v; }
+    private LinearLayout surface() { LinearLayout v = column(); v.setBackground(shape(CARD, CARD)); page.addView(v, spaced(22)); return v; }
+    private void divider(LinearLayout target) { View line = new View(this); line.setBackgroundColor(BORDER); target.addView(line, new LinearLayout.LayoutParams(-1, dp(1))); }
+    private void emptyState(String title, String detail) { addText(page, title, 17, TEXT, true, 22); addText(page, detail, 14, MUTED, false, 8); }
     private TextView text(String value, int size, int color, boolean bold) { TextView v = new TextView(this); v.setText(value); v.setTextSize(size); v.setTextColor(color); v.setLineSpacing(dp(3), 1f); if (bold) v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); return v; }
     private void addText(LinearLayout target, String value, int size, int color, boolean bold, int margin) { target.addView(text(value, size, color, bold), spaced(margin)); }
-    private Button button(String title, boolean primary, View.OnClickListener listener) { Button v = new Button(this); v.setText(title); v.setAllCaps(false); v.setTextSize(14); v.setTextColor(primary ? Color.WHITE : TEXT); v.setMinHeight(dp(52)); v.setPadding(dp(10), dp(10), dp(10), dp(10)); v.setBackground(shape(primary ? ACCENT : CARD, primary ? ACCENT : BORDER)); v.setStateListAnimator(null); v.setOnClickListener(listener); return v; }
+    private Button button(String title, boolean primary, View.OnClickListener listener) { Button v = new Button(this); v.setText(title); v.setAllCaps(false); v.setTextSize(15); v.setTypeface(Typeface.DEFAULT, Typeface.BOLD); v.setTextColor(primary ? Color.WHITE : TEXT); v.setMinHeight(dp(54)); v.setPadding(dp(10), dp(10), dp(10), dp(10)); v.setBackground(shape(primary ? ACCENT : CARD, primary ? ACCENT : BORDER)); v.setStateListAnimator(null); v.setOnClickListener(listener); return v; }
     private Button link(String title, View.OnClickListener listener) {
         Button v = button(title, false, listener); v.setMinHeight(dp(44)); v.setPadding(dp(0), dp(8), dp(0), dp(8));
         v.setTextColor(ACCENT); v.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL);
         v.setBackgroundColor(Color.TRANSPARENT); return v;
     }
-    private GradientDrawable shape(int color, int stroke) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(12)); d.setStroke(dp(1), stroke); return d; }
+    private GradientDrawable shape(int color, int stroke) { GradientDrawable d = new GradientDrawable(); d.setColor(color); d.setCornerRadius(dp(10)); d.setStroke(dp(1), stroke); return d; }
     private LinearLayout.LayoutParams spaced(int top) { LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, -2); p.topMargin = dp(top); return p; }
     private int dp(int value) { return Math.round(getResources().getDisplayMetrics().density * value); }
     private void showMessage(String title, String message) { new AlertDialog.Builder(this).setTitle(title).setMessage(message).setPositiveButton("知道了", null).show(); }

@@ -34,6 +34,11 @@ import cn.local.tickethelper.ai.AiFollowUpContext;
 import cn.local.tickethelper.ai.AiDraft;
 import cn.local.tickethelper.ai.AiSecretsStore;
 import cn.local.tickethelper.ai.AiSettings;
+import cn.local.tickethelper.ai.NavigatorStep;
+import cn.local.tickethelper.core.MonitorConfig;
+import android.view.Gravity;
+import android.widget.HorizontalScrollView;
+import java.time.Instant;
 import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
@@ -43,18 +48,23 @@ import java.util.concurrent.Future;
 
 /** Explicit, advisory-only model requests. Model text never becomes an executable action. */
 public final class AiAssistantActivity extends Activity {
-    private static final int BG = Color.rgb(245, 246, 248), CARD = Color.WHITE;
-    private static final int TEXT = Color.rgb(23, 38, 53), MUTED = Color.rgb(88, 101, 117);
-    private static final int ACCENT = Color.rgb(23, 107, 91), BORDER = Color.rgb(222, 228, 231);
+    private static final int BG = Color.rgb(247, 248, 252), CARD = Color.WHITE;
+    private static final int TEXT = Color.rgb(24, 33, 58), MUTED = Color.rgb(102, 113, 138);
+    private static final int ACCENT = Color.rgb(61, 90, 254), BORDER = Color.rgb(228, 232, 242);
+    private static final int TINT = Color.rgb(238, 241, 255);
     private static final String[] TOPICS = {"配置建议", "场次比较", "票档解释", "异常分析"};
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
-    private final List<Button> topics = new ArrayList<>();
     private final List<View> settingsControls = new ArrayList<>();
     private AiSecretsStore secrets;
     private AiContextRepository context;
     private LinearLayout page, askPage, settingsPage, notesPage, settingsPanel, advancedSettingsPanel, learningPanel, resultCard;
     private LinearLayout composerCard, reviewPanel, reviewDetails, testReviewPanel;
+    private LinearLayout guideHeader, dialogue, contextDrawer, conversationIntro;
+    private TextView topTitle, phaseLabel, selectedStrip;
+    private Button nextAction;
+    private NavigatorStep navigatorStep = NavigatorStep.EVENT;
+    private boolean keyboardVisible;
     private ScrollView scroll;
     private EditText question, baseUrl, model, apiKey, outputLimit, dailyLimit, inputLimit, timeoutLimit, note;
     private CheckBox enabled, legacy;
@@ -72,7 +82,7 @@ public final class AiAssistantActivity extends Activity {
     private Future<?> requestFuture;
     private AiRequestReview reviewedRequest;
     private AiFollowUpContext lastExchange, followUp;
-    private String originLabel = "购票";
+    private String originLabel = "计划";
     private final Runnable preparePreview = this::prepareQuestionPreview;
     private String answer = "";
     private AiDraft suggestedDraft;
@@ -83,6 +93,8 @@ public final class AiAssistantActivity extends Activity {
         // All entry paths, including Catalog's separate task, must stop device actions first.
         AppStore monitorState = new AppStore(this);
         MonitorService monitor = MonitorService.instance;
+        String stoppedDetail = monitorState.getMonitorStopDetail();
+        AiContextRepository.recordTaskIssue(stoppedDetail.isEmpty() ? monitorState.getStatus() : stoppedDetail);
         if (monitor != null && (monitor.isRunning() || monitorState.isArmed()))
             monitor.pause("已打开 AI 辅助，监控保持暂停。");
         monitorState.setArmed(false);
@@ -100,7 +112,7 @@ public final class AiAssistantActivity extends Activity {
         settingsOnlyEntry = "settings".equals(getIntent().getStringExtra("screen"));
         build();
         String initialQuestion = state == null ? getIntent().getStringExtra("question") : null;
-        question.setText(initialQuestion == null || initialQuestion.trim().isEmpty() ? suggestedQuestion() : initialQuestion);
+        question.setText(initialQuestion == null ? "" : initialQuestion);
         restoreSettings();
         installListeners();
         refreshNotes(); refreshCapture(); reloadSettings(true);
@@ -108,95 +120,114 @@ public final class AiAssistantActivity extends Activity {
     }
 
     private void build() {
+        getWindow().setDecorFitsSystemWindows(false);
+        getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
+        LinearLayout shell = column(); shell.setBackgroundColor(BG);
+        LinearLayout top = new LinearLayout(this); top.setOrientation(LinearLayout.HORIZONTAL);
+        top.setGravity(Gravity.CENTER_VERTICAL); top.setPadding(dp(12), dp(6), dp(12), dp(6));
+        Button back = textButton("‹ 返回", v -> onBackPressed());
+        top.addView(back, new LinearLayout.LayoutParams(dp(72), dp(44)));
+        topTitle = text("领航员", 19, TEXT, true); topTitle.setGravity(Gravity.CENTER);
+        top.addView(topTitle, new LinearLayout.LayoutParams(0, -2, 1));
+        settingsToggle = textButton("更多 ···", v -> showNavigatorMenu());
+        top.addView(settingsToggle, new LinearLayout.LayoutParams(dp(80), dp(44))); shell.addView(top);
+
+        guideHeader = column(); guideHeader.setPadding(dp(22), dp(16), dp(22), dp(18));
+        guideHeader.setBackgroundColor(TEXT);
+        phaseLabel = text("当前位置 · 选演出", 11, Color.rgb(167, 184, 250), true); guideHeader.addView(phaseLabel);
+        journeyTitle = text("先找到想看的演出", 23, Color.WHITE, true); guideHeader.addView(journeyTitle, spaced(7));
+        journeyHint = text("", 13, Color.rgb(207, 214, 233), false); guideHeader.addView(journeyHint, spaced(5));
+        selectedStrip = text("", 12, Color.rgb(207, 214, 233), false); selectedStrip.setMaxLines(2);
+        selectedStrip.setEllipsize(android.text.TextUtils.TruncateAt.END); guideHeader.addView(selectedStrip, spaced(10));
+        nextAction = button("下一步：去选演出  →", true, v -> followNavigator());
+        nextAction.setTextColor(TEXT); nextAction.setBackground(background(Color.WHITE, Color.WHITE));
+        guideHeader.addView(nextAction, spaced(12)); shell.addView(guideHeader);
+
         scroll = new ScrollView(this); scroll.setFillViewport(true); scroll.setBackgroundColor(BG);
-        page = column(); page.setPadding(dp(18), dp(12), dp(18), dp(30)); scroll.addView(page);
-        scroll.setOnApplyWindowInsetsListener((view, insets) -> {
-            android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
-            view.setPadding(bars.left, bars.top, bars.right, bars.bottom); return insets;
-        });
-        setContentView(scroll);
+        page = column(); page.setPadding(dp(20), dp(18), dp(20), dp(24)); scroll.addView(page);
+        shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         askPage = column(); settingsPage = column(); notesPage = column();
         page.addView(askPage); page.addView(settingsPage); page.addView(notesPage);
 
-        LinearLayout topBar = new LinearLayout(this); topBar.setOrientation(LinearLayout.HORIZONTAL);
-        Button back = button("‹ 返回" + originLabel, false, v -> leaveAssistant());
-        back.setBackgroundColor(Color.TRANSPARENT); back.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL);
-        topBar.addView(back, new LinearLayout.LayoutParams(0, -2, 1));
-        settingsToggle = button("模型", false, v -> showScreen("settings"));
-        settingsToggle.setBackgroundColor(Color.TRANSPARENT); topBar.addView(settingsToggle, new LinearLayout.LayoutParams(-2, -2));
-        askPage.addView(topBar);
-        askPage.addView(text("AI 购票助手", 12, ACCENT, true), spaced(16));
-        journeyTitle = text("", 27, TEXT, true); askPage.addView(journeyTitle, spaced(5));
-        journeyHint = text("", 14, MUTED, false); askPage.addView(journeyHint, spaced(7));
-
-        // Replies occupy the first useful screen, instead of appearing underneath settings.
-        LinearLayout result = card(askPage, 18); resultCard = result; result.setVisibility(View.GONE);
-        resultTitle = text("给你的建议", 18, TEXT, true); result.addView(resultTitle);
-        resultText = text("", 16, TEXT, false); resultText.setTextIsSelectable(true); resultText.setSaveEnabled(false); result.addView(resultText, spaced(12));
-        applyDraftButton = button("核对并使用这份计划", true, v -> reviewDraft());
-        applyDraftButton.setVisibility(View.GONE); result.addView(applyDraftButton, spaced(16));
-        resultReturnButton = button("返回" + originLabel, true, v -> leaveAssistant());
-        result.addView(resultReturnButton, spaced(12));
-        result.addView(button("补充偏好 / 继续追问", false, v -> beginFollowUp()), spaced(8));
-        result.addView(button("开始新问题", false, v -> beginNewQuestion()), spaced(6));
-        LinearLayout resultTools = column(); resultTools.setVisibility(View.GONE);
-        result.addView(button("更多 · 记录建议与调用详情", false, v -> resultTools.setVisibility(resultTools.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE)), spaced(8));
-        resultMeta = text("", 12, MUTED, false); resultTools.addView(resultMeta, spaced(8));
-        resultTools.addView(button("记下有用的建议", false, v -> useAnswerAsNote()), spaced(8));
-        result.addView(resultTools);
-        result.addView(text("AI 提供参考；余票与订单以大麦为准。", 12, MUTED, false), spaced(10));
-
-        LinearLayout ask = card(askPage, 18); composerCard = ask;
-        followUpHint = text("", 12, ACCENT, false); followUpHint.setVisibility(View.GONE); ask.addView(followUpHint);
-        question = field(ask, "你想怎么选？", "补充你的偏好即可", false, 64000);
-        question.setSingleLine(false); question.setMinLines(2); question.setMaxLines(6);
-        question.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-        question.setImeOptions(EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING); updateQuestionHint();
-        Button suggestion = button("帮我梳理这一步", false, v -> question.setText(suggestedQuestion()));
-        ask.addView(suggestion, spaced(10));
-        reviewPanel = column(); ask.addView(reviewPanel, spaced(14));
-        reviewSummary = text("正在整理可参考的信息…", 12, MUTED, false); reviewPanel.addView(reviewSummary);
-        reviewDetailsButton = button("查看本次发送内容 ▾", false, v -> {
-            boolean expanded = reviewDetails.getVisibility() != View.VISIBLE;
-            reviewDetails.setVisibility(expanded ? View.VISIBLE : View.GONE);
-            reviewDetailsButton.setText(expanded ? "收起发送内容 ▴" : "查看本次发送内容 ▾");
-        });
-        reviewDetailsButton.setVisibility(View.GONE);
-        reviewDetailsButton.setMinHeight(dp(36)); reviewDetailsButton.setTextSize(12); reviewDetailsButton.setBackgroundColor(Color.TRANSPARENT);
-        reviewDetailsButton.setGravity(android.view.Gravity.START | android.view.Gravity.CENTER_VERTICAL); reviewPanel.addView(reviewDetailsButton, spaced(5));
-        reviewDetails = column(); reviewDetails.setVisibility(View.GONE);
-        reviewDetails.addView(text("问题与公开参考信息 · 实际发送正文", 12, MUTED, true), spaced(8));
-        reviewPayload = text("", 13, TEXT, false); reviewPayload.setTextIsSelectable(true); reviewDetails.addView(reviewPayload, spaced(6));
+        contextDrawer = column(); contextDrawer.setVisibility(View.GONE);
+        contextDrawer.setPadding(dp(14), dp(12), dp(14), dp(12)); contextDrawer.setBackground(background(CARD, BORDER));
+        askPage.addView(contextDrawer);
+        contextDrawer.addView(text("本次发送内容", 16, TEXT, true));
+        reviewDetails = column(); reviewDetails.setVisibility(View.GONE); contextDrawer.addView(reviewDetails, spaced(8));
+        reviewPayload = text("", 13, TEXT, false); reviewPayload.setTextIsSelectable(true); reviewDetails.addView(reviewPayload);
         LinearLayout systemDetails = column(); systemDetails.setVisibility(View.GONE);
-        reviewDetails.addView(button("查看给模型的工作说明 ▾", false, v -> systemDetails.setVisibility(systemDetails.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE)), spaced(8));
-        reviewSystem = text("", 12, MUTED, false); reviewSystem.setTextIsSelectable(true); systemDetails.addView(reviewSystem, spaced(6));
-        reviewDetails.addView(systemDetails); reviewPanel.addView(reviewDetails);
-        previewButton = button("发送给 AI", true, v -> sendReviewedQuestion()); ask.addView(previewButton, spaced(14));
-        requestStatus = text("本地整理信息，点击发送后才调用模型。", 12, MUTED, false); ask.addView(requestStatus, spaced(8));
-        cancelButton = button("停止等待", false, v -> stopWaiting("已停止等待；已发出的请求可能仍产生费用。"));
-        cancelButton.setVisibility(View.GONE); ask.addView(cancelButton, spaced(8));
+        reviewDetails.addView(textButton("给模型的说明 ▾", v -> systemDetails.setVisibility(systemDetails.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE)), spaced(8));
+        reviewSystem = text("", 12, MUTED, false); reviewSystem.setTextIsSelectable(true); systemDetails.addView(reviewSystem);
+        reviewDetails.addView(systemDetails);
+        captureStatus = text("", 12, MUTED, false); contextDrawer.addView(captureStatus, spaced(8));
+        compactModelStatus = text("", 12, MUTED, false); contextDrawer.addView(compactModelStatus, spaced(6));
 
-        LinearLayout tools = card(askPage, 14);
-        Button refreshContext = button("页面不一样？更新大麦信息", false, v -> requestCapture()); tools.addView(refreshContext);
-        captureStatus = text("", 12, MUTED, false); tools.addView(captureStatus, spaced(6));
-        LinearLayout moreTools = column(); moreTools.setVisibility(View.GONE);
-        tools.addView(button("其他问题与经验笔记 ▾", false, v -> moreTools.setVisibility(moreTools.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE)), spaced(8));
-        String[] topicLabels = {"帮我找演出", "帮我选场次", "帮我选票价", "为什么停下了"};
-        for (int i = 0; i < TOPICS.length; i++) {
-            final String value = TOPICS[i];
-            Button item = button(topicLabels[i], false, v -> selectTopic(value));
-            moreTools.addView(item, spaced(6)); topics.add(item);
-        }
-        moreTools.addView(button("我的经验笔记", false, v -> showScreen("notes")), spaced(8));
-        compactModelStatus = text("正在读取模型设置…", 12, MUTED, false); moreTools.addView(compactModelStatus, spaced(8));
-        tools.addView(moreTools);
+        conversationIntro = column(); conversationIntro.setPadding(0, dp(2), 0, dp(14));
+        conversationIntro.addView(text("你现在可以这样做", 16, TEXT, true));
+        conversationIntro.addView(text("点上方“下一步”直接继续。拿不准时，在下面问我；我会结合你已经选好的内容回答。", 14, MUTED, false), spaced(7));
+        askPage.addView(conversationIntro, spaced(10));
+        dialogue = column(); askPage.addView(dialogue);
+        resultCard = column(); resultCard.setPadding(dp(16), dp(14), dp(16), dp(14));
+        resultCard.setBackground(background(CARD, CARD)); resultCard.setVisibility(View.GONE); dialogue.addView(resultCard, spaced(8));
+        resultTitle = text("领航员", 12, ACCENT, true); resultCard.addView(resultTitle);
+        resultText = text("", 16, TEXT, false); resultText.setTextIsSelectable(true); resultText.setSaveEnabled(false); resultCard.addView(resultText, spaced(8));
+        applyDraftButton = button("核对这份计划  →", true, v -> reviewDraft());
+        applyDraftButton.setVisibility(View.GONE); resultCard.addView(applyDraftButton, spaced(12));
+        resultReturnButton = textButton("按上方下一步继续", v -> followNavigator()); resultCard.addView(resultReturnButton, spaced(8));
+        LinearLayout answerActions = new LinearLayout(this); answerActions.setOrientation(LinearLayout.HORIZONTAL);
+        answerActions.addView(textButton("继续问", v -> beginFollowUp()), new LinearLayout.LayoutParams(0, dp(42), 1));
+        answerActions.addView(textButton("记下来", v -> useAnswerAsNote()), new LinearLayout.LayoutParams(0, dp(42), 1));
+        resultCard.addView(answerActions, spaced(4));
+        resultMeta = text("", 11, MUTED, false); resultCard.addView(resultMeta, spaced(4));
+
+        composerCard = column(); composerCard.setPadding(dp(16), dp(8), dp(16), dp(12));
+        composerCard.setBackgroundColor(CARD); shell.addView(composerCard);
+        followUpHint = text("", 11, ACCENT, false); followUpHint.setVisibility(View.GONE); composerCard.addView(followUpHint);
+        HorizontalScrollView suggestions = new HorizontalScrollView(this); suggestions.setHorizontalScrollBarEnabled(false);
+        LinearLayout quick = new LinearLayout(this); quick.setOrientation(LinearLayout.HORIZONTAL);
+        quick.addView(chip("这一步怎么做", v -> question.setText("我现在在" + navigatorStep.phase + "这一步，请用最短的步骤告诉我该点哪里、做完会到哪一步。")));
+        quick.addView(chip("帮我选", v -> question.setText(suggestedQuestion())));
+        quick.addView(chip("读一眼大麦", v -> requestCapture()));
+        quick.addView(chip("新问题", v -> beginNewQuestion()));
+        suggestions.addView(quick); composerCard.addView(suggestions);
+
+        reviewPanel = column(); composerCard.addView(reviewPanel, spaced(4));
+        LinearLayout recipientRow = new LinearLayout(this); recipientRow.setOrientation(LinearLayout.HORIZONTAL); recipientRow.setGravity(Gravity.CENTER_VERTICAL);
+        reviewSummary = text("不使用 AI 也可以按上方步骤继续", 11, MUTED, false); reviewSummary.setMaxLines(2);
+        recipientRow.addView(reviewSummary, new LinearLayout.LayoutParams(0, -2, 1));
+        reviewDetailsButton = textButton("发送内容 ▾", v -> toggleContextDrawer());
+        reviewDetailsButton.setTextSize(11); reviewDetailsButton.setMinHeight(dp(32));
+        recipientRow.addView(reviewDetailsButton, new LinearLayout.LayoutParams(-2, dp(36))); reviewPanel.addView(recipientRow);
+
+        LinearLayout inputRow = new LinearLayout(this); inputRow.setOrientation(LinearLayout.HORIZONTAL); inputRow.setGravity(Gravity.BOTTOM);
+        question = new EditText(this); question.setTextColor(TEXT); question.setTextSize(15); question.setHintTextColor(MUTED);
+        question.setPadding(dp(13), dp(11), dp(13), dp(11)); question.setBackground(background(BG, BORDER));
+        question.setSingleLine(false); question.setMinLines(1); question.setMaxLines(4); question.setMinHeight(dp(48));
+        question.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_MULTI_LINE | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        question.setImeOptions(EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING); question.setSaveEnabled(false);
+        question.setFilters(new InputFilter[]{new InputFilter.LengthFilter(64000)});
+        question.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO); question.setImportantForContentCapture(View.IMPORTANT_FOR_CONTENT_CAPTURE_NO);
+        question.setContentDescription("给领航员的问题或补充偏好"); updateQuestionHint();
+        inputRow.addView(question, new LinearLayout.LayoutParams(0, -2, 1));
+        previewButton = button("发送", true, v -> sendReviewedQuestion()); previewButton.setMinWidth(0); previewButton.setTextSize(13);
+        LinearLayout.LayoutParams sendSize = new LinearLayout.LayoutParams(dp(72), dp(48)); sendSize.leftMargin = dp(8); inputRow.addView(previewButton, sendSize);
+        cancelButton = button("停止", false, v -> stopWaiting("已停止等待；已发出的请求可能仍产生费用。")); cancelButton.setVisibility(View.GONE);
+        LinearLayout.LayoutParams cancelSize = new LinearLayout.LayoutParams(dp(72), dp(48)); cancelSize.leftMargin = dp(8); inputRow.addView(cancelButton, cancelSize);
+        composerCard.addView(inputRow, spaced(4));
+        requestStatus = text("点击发送才调用模型", 11, MUTED, false); requestStatus.setMaxLines(3); composerCard.addView(requestStatus, spaced(5));
+
+        shell.setOnApplyWindowInsetsListener((view, insets) -> {
+            android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());
+            android.graphics.Insets ime = insets.getInsets(WindowInsets.Type.ime()); keyboardVisible = ime.bottom > 0;
+            view.setPadding(bars.left, bars.top, bars.right, Math.max(bars.bottom, ime.bottom));
+            guideHeader.setVisibility("ask".equals(screen) && !keyboardVisible ? View.VISIBLE : View.GONE);
+            return insets;
+        });
+        setContentView(shell);
         updateJourney();
 
-        settingsPage.addView(button(settingsOnlyEntry ? "‹ 返回" + originLabel : "‹ 返回 AI 助手", false, v -> {
-            if (settingsOnlyEntry) leaveAssistant(); else showScreen("ask");
-        }));
-        settingsPage.addView(text("模型设置", 28, TEXT, true), spaced(18));
-        settingsPage.addView(text("使用你自己的接口、模型和密钥。", 14, MUTED, false), spaced(6));
+        settingsPage.addView(text("连接你的模型", 24, TEXT, true));
+        settingsPage.addView(text("日常对话不用填写这些参数。", 13, MUTED, false), spaced(6));
         LinearLayout connection = card(settingsPage, 18);
         settingsSummary = text("正在读取设置…", 17, TEXT, true); connection.addView(settingsSummary);
         usageStatus = text("", 12, MUTED, false); connection.addView(usageStatus, spaced(6));
@@ -251,7 +282,7 @@ public final class AiAssistantActivity extends Activity {
         privacy.addView(button("密钥与发送内容说明", false, v -> message("密钥与发送内容", "密钥在本机加密保存，不进入备份或开发资料。更换接口地址时需要重新填写密钥。\n\n每次发送前会展示实际内容和服务商。普通监控不调用模型；模型建议不会直接执行点击或提交订单。")));
         clearSettingsButton = button("关闭 AI 并清除密钥", false, v -> confirmClear()); privacy.addView(clearSettingsButton, spaced(8));
 
-        notesPage.addView(button("‹ 返回 AI 助手", false, v -> showScreen("ask")));
+
         notesPage.addView(text("我的经验笔记", 28, TEXT, true), spaced(18));
         notesPage.addView(text("记下你核对过的经验，供下次提问参考。", 14, MUTED, false), spaced(6));
         learningPanel = card(notesPage, 18);
@@ -270,6 +301,11 @@ public final class AiAssistantActivity extends Activity {
             invalidatePreview(); stopWaiting("已离开本次分析，停止等待回复；已发出的请求可能仍产生费用。");
         }
         screen = next;
+        boolean daily = "ask".equals(screen);
+        topTitle.setText(daily ? "领航员" : "settings".equals(screen) ? "模型设置" : "经验笔记");
+        guideHeader.setVisibility(daily && !keyboardVisible ? View.VISIBLE : View.GONE);
+        composerCard.setVisibility(daily ? View.VISIBLE : View.GONE);
+        updateJourney();
         askPage.setVisibility("ask".equals(screen) ? View.VISIBLE : View.GONE);
         settingsPage.setVisibility("settings".equals(screen) ? View.VISIBLE : View.GONE);
         notesPage.setVisibility("notes".equals(screen) ? View.VISIBLE : View.GONE);
@@ -306,7 +342,7 @@ public final class AiAssistantActivity extends Activity {
         legacy.setOnCheckedChangeListener((button, value) -> settingsWatcher.onTextChanged("", 0, 0, 0));
         question.addTextChangedListener(watcher(() -> {
             if (!restoring) { invalidatePreview(); cancelRequest("问题已修改，正在更新参考信息。", true);
-                resultTitle.setText("上次的建议"); schedulePreview(); }
+                schedulePreview(); }
         }));
     }
 
@@ -419,13 +455,18 @@ public final class AiAssistantActivity extends Activity {
         if (destroyed || !foreground || !"ask".equals(screen) || sending || saving || loadingSettings || settingsDirty) return;
         if (!savedSettings.enabled || !savedHasKey || !savedSettings.validate().isEmpty()) {
             invalidatePreview(); reviewSummary.setText("先连接你自己的模型，之后每次只需点发送。");
-            showRequestStatus("点击下方按钮设置模型，当前不会发送。"); updateControls(); return;
+            showRequestStatus("点“连接 AI”完成一次设置，之后直接提问。"); updateControls(); return;
         }
         if (question.getText().toString().trim().isEmpty()) {
-            invalidatePreview(); reviewSummary.setText("说说你的偏好，或点“帮我梳理这一步”。"); updateControls(); return;
+            invalidatePreview(); reviewSummary.setText("发给 " + providerHost(savedSettings) + " · " + savedSettings.model);
+            showRequestStatus(followUp == null ? "点发送才调用模型" : "继续聊会带上上一轮公开问题和回复；新问题可清除上下文。"); updateControls(); return;
         }
         final AiSettings settings = savedSettings;
-        final String selectedTopic = topic, userQuestion = question.getText().toString();
+        updateJourney();
+        final String selectedTopic = topic, userQuestion = question.getText().toString()
+                + "\n\n[助手本地导航状态]\n当前位置：" + navigatorStep.phase
+                + "\n界面上的下一步按钮：" + navigatorStep.actionLabel
+                + "\n按钮作用：" + navigatorStep.instruction;
         final AiFollowUpContext prior = followUp;
         // Cancel obsolete local work before capturing a new generation.
         if (preparing) cancelRequest("", false);
@@ -448,10 +489,10 @@ public final class AiAssistantActivity extends Activity {
                 }
                 reviewedRequest = new AiRequestReview(settings, preview.systemPrompt, preview.userPrompt, generation, false);
                 reviewSummary.setText("将发送给 " + providerHost(settings) + " · " + settings.model
-                        + "\n参考：" + referenceSummary(preview.userPrompt) + "。可以展开核对。"
-                        + (prior == null ? "" : "\n" + prior.notice()));
+                        + "\n" + referenceSummary(preview.userPrompt) + (prior == null ? "" : " · 含上一轮对话"));
                 reviewPayload.setText(preview.userPrompt); reviewSystem.setText(preview.systemPrompt);
                 reviewDetailsButton.setVisibility(View.VISIBLE);
+                if (contextDrawer.getVisibility() == View.VISIBLE) reviewDetails.setVisibility(View.VISIBLE);
                 showRequestStatus("点击发送后，调用一次你配置的模型。"); updateControls();
             });
         });
@@ -502,7 +543,14 @@ public final class AiAssistantActivity extends Activity {
         handler.removeCallbacks(preparePreview);
         reviewedRequest = null;
         if (test) testReviewPanel.setVisibility(View.GONE);
-        if (!test) { suggestedDraft = null; applyDraftButton.setVisibility(View.GONE); resultCard.setVisibility(View.GONE); }
+        if (!test) {
+            suggestedDraft = null; applyDraftButton.setVisibility(View.GONE); resultReturnButton.setVisibility(View.GONE);
+            showConversationQuestion(question.getText().toString());
+            answer = ""; resultTitle.setText("领航员"); resultText.setText("正在想一想…"); resultMeta.setText("");
+            resultCard.setVisibility(View.VISIBLE); contextDrawer.setVisibility(View.GONE);
+            restoring = true; question.setText(""); restoring = false;
+            scrollTo(resultCard);
+        }
         sending = true; cancellation = new AiHttpClient.Cancellation();
         AiHttpClient.Cancellation currentCancellation = cancellation;
         long generation = ++requestGeneration;
@@ -522,7 +570,13 @@ public final class AiAssistantActivity extends Activity {
             handler.post(() -> {
                 if (destroyed || !foreground || generation != requestGeneration) return;
                 sending = false; cancellation = null; requestFuture = null; acceptProviderState(metadata, false);
-                if (completed == null) { String failureText = error == null ? "本次调用已结束，没有可显示结果。" : error; showRequestStatus(failureText); if (test) settingsFeedback.setText(failureText); return; }
+                if (completed == null) {
+                    String failureText = error == null ? "本次调用已结束，没有可显示结果。" : error;
+                    showRequestStatus(failureText);
+                    if (test) settingsFeedback.setText(failureText);
+                    else { resultText.setText(failureText); resultMeta.setText("没有自动重试。你仍可以按上方步骤继续。"); }
+                    return;
+                }
                 if (test) { showRequestStatus("模型连接正常。"); settingsFeedback.setText("连接正常，已收到模型回复。"); }
                 else {
                     answer = completed.text;
@@ -536,10 +590,14 @@ public final class AiAssistantActivity extends Activity {
                             : answer.replaceFirst("(?is)```json\\s*.*?```", "").trim();
                     resultText.setText(readable.isEmpty() && suggestedDraft != null ? suggestedDraft.summary : readable);
                     resultCard.setVisibility(View.VISIBLE);
-                    resultTitle.setText("给你的建议");
+                    resultTitle.setText("领航员");
                     applyDraftButton.setVisibility(suggestedDraft == null ? View.GONE : View.VISIBLE);
                     resultReturnButton.setVisibility(suggestedDraft == null ? View.VISIBLE : View.GONE);
-                    composerCard.setVisibility(View.GONE);
+                    composerCard.setVisibility(View.VISIBLE);
+                    followUp = lastExchange;
+                    followUpHint.setText("继续输入即可追问 · 点“新问题”重新开始"); followUpHint.setVisibility(View.VISIBLE);
+                    question.setHint("继续问，或补充你的偏好…");
+                    updateJourney();
                     scrollTo(resultCard);
                 }
                 resultMeta.setText((test ? "连接测试 · " : "") + String.format(java.util.Locale.ROOT, "%.1f 秒", completed.elapsedMs / 1000.0)
@@ -567,6 +625,9 @@ public final class AiAssistantActivity extends Activity {
         if (requestFuture != null) requestFuture.cancel(true);
         boolean wasSending = sending || preparing;
         reviewedRequest = null;
+        if (sending && resultCard != null && "正在想一想…".contentEquals(resultText.getText())) {
+            resultText.setText("这次等待已停止。"); resultMeta.setText("已发出的请求可能仍产生费用，未自动重试。");
+        }
         sending = false; preparing = false; cancellation = null; requestFuture = null;
         if (!destroyed && previewButton != null) {
             updateControls();
@@ -578,7 +639,7 @@ public final class AiAssistantActivity extends Activity {
         handler.removeCallbacks(preparePreview);
         reviewedRequest = null;
         if (reviewDetails != null) {
-            reviewDetails.setVisibility(View.GONE); reviewDetailsButton.setText("查看本次发送内容 ▾");
+            reviewDetails.setVisibility(View.GONE); reviewDetailsButton.setText("发送内容 ▾");
             reviewDetailsButton.setVisibility(View.GONE); reviewPayload.setText(""); reviewSystem.setText("");
         }
         if (testReviewPanel != null) { testReviewPanel.removeAllViews(); testReviewPanel.setVisibility(View.GONE); }
@@ -588,37 +649,143 @@ public final class AiAssistantActivity extends Activity {
         if (lastExchange == null || sending || preparing) return;
         invalidatePreview(); cancelRequest("", false);
         followUp = lastExchange;
-        followUpHint.setText(followUp.notice()); followUpHint.setVisibility(View.VISIBLE);
+        followUpHint.setText("继续问上一轮 · 点“新问题”清除上下文"); followUpHint.setVisibility(View.VISIBLE);
         composerCard.setVisibility(View.VISIBLE); resultTitle.setText("上一轮的建议");
         question.setText(""); question.setHint("直接回答上一条问题，或补充你的偏好");
-        scrollTo(composerCard); question.requestFocus();
+        question.requestFocus();
     }
 
     private void beginNewQuestion() {
-        if (sending || preparing) return;
         invalidatePreview(); cancelRequest("", false);
         followUp = null; lastExchange = null; suggestedDraft = null; answer = "";
         followUpHint.setVisibility(View.GONE); resultCard.setVisibility(View.GONE);
         applyDraftButton.setVisibility(View.GONE); composerCard.setVisibility(View.VISIBLE);
-        question.setText(""); updateQuestionHint(); scrollTo(composerCard); question.requestFocus();
+        dialogue.removeAllViews(); dialogue.addView(resultCard, spaced(8)); conversationIntro.setVisibility(View.VISIBLE);
+        question.setText(""); updateQuestionHint(); question.requestFocus();
     }
 
     private void selectTopic(String value) {
         followUp = null; lastExchange = null; followUpHint.setVisibility(View.GONE);
         topic = value; updateQuestionHint(); invalidatePreview(); cancelRequest("已切换问题。", true);
         updateJourney(); resultCard.setVisibility(View.GONE); composerCard.setVisibility(View.VISIBLE);
+        dialogue.removeAllViews(); dialogue.addView(resultCard, spaced(8)); conversationIntro.setVisibility(View.VISIBLE);
         question.setText(suggestedQuestion()); schedulePreview(); scroll.scrollTo(0, 0);
     }
 
     private void updateJourney() {
-        String title, hint;
-        switch (topic) {
-            case "场次比较": title = "这几场，怎么选？"; hint = "我会结合已读取的场次，帮你比较时间和偏好。"; break;
-            case "票档解释": title = "选一档合适的票"; hint = "说出预算或座位偏好，我帮你看懂当前票档。"; break;
-            case "异常分析": title = "一起看看卡在哪"; hint = "结合最近一次状态，解释原因并给出下一步。"; break;
-            default: title = "想看什么，说一句就好"; hint = "告诉我演出、城市或预算，先帮你整理选择。"; break;
+        AppStore state = new AppStore(this);
+        MonitorConfig config = state.loadConfig();
+        CatalogStore.Snapshot catalog = CatalogStore.get();
+        long age = System.currentTimeMillis() - catalog.readAtMs;
+        boolean fresh = (catalog.readAtMs > 0 && age >= 0 && age <= 300_000)
+                || ("BUSY".equals(catalog.stage) && CatalogController.isActive());
+        boolean targetReady = config.validate().isEmpty() && config.deadline != null && config.deadline.isAfter(Instant.now())
+                && !java.time.LocalDate.parse(config.date).isBefore(java.time.LocalDate.now(java.time.ZoneId.of("Asia/Shanghai")));
+        android.app.NotificationManager manager = getSystemService(android.app.NotificationManager.class);
+        android.app.NotificationChannel channel = manager == null ? null : manager.getNotificationChannel("monitor_alert");
+        boolean phoneReady = MonitorService.instance != null && manager != null && manager.areNotificationsEnabled()
+                && channel != null && channel.getImportance() != android.app.NotificationManager.IMPORTANCE_NONE
+                && getPackageManager().getLaunchIntentForPackage("cn.damai") != null
+                && (!AppStore.INPUT_SHIZUKU.equals(state.getInputMode()) || ShizukuInputBridge.get(this).isReady());
+        boolean savedSelection = targetReady && catalog.event != null && catalog.session != null
+                && catalog.event.label.equals(CatalogActivity.selectedTitle(this, config))
+                && catalog.session.date.equals(config.date) && catalog.session.time.equals(config.time);
+        boolean inSelection = (fresh && (!savedSelection || originLabel.startsWith("选择")))
+                || (originLabel.startsWith("选择") && "BLOCKED".equals(catalog.stage));
+        navigatorStep = NavigatorStep.resolve(phoneReady, targetReady, state.isImportedTargetPendingReview(),
+                catalog.stage, inSelection, config.mode == MonitorConfig.Mode.LOCK_ORDER, state.getMonitorStopState());
+        phaseLabel.setText("当前位置 · " + navigatorStep.phase);
+        journeyTitle.setText(navigatorStep.title); journeyHint.setText(navigatorStep.instruction);
+        nextAction.setText("下一步：" + navigatorStep.actionLabel + "  →");
+        resultReturnButton.setText(navigatorStep.actionLabel + "  →");
+        if (inSelection && catalog.event != null) {
+            String session = catalog.session == null ? "场次待选择" : catalog.session.date + " " + catalog.session.time;
+            selectedStrip.setText(catalog.event.label + "\n" + session + " · "
+                    + ("TIERS".equals(catalog.stage) ? "票价待确认" : "继续选择"));
+        } else if (!config.eventKeyword.isEmpty()) {
+            selectedStrip.setText(config.eventKeyword + " · " + config.city + "\n"
+                    + (targetReady ? config.date + " " + config.time + " · " + priceLabels(config.prices)
+                    : "已保存的需求待核对，请从大麦选择当前场次"));
+        } else selectedStrip.setText("还没有保存演出 · 从搜索开始");
+    }
+
+    private String priceLabels(List<Integer> prices) {
+        List<String> labels = new ArrayList<>();
+        for (Integer price : prices) labels.add("¥" + price);
+        return String.join(" / ", labels);
+    }
+
+    private void followNavigator() {
+        if (saving || loadingSettings) { toast("正在保存或读取设置，请稍候。"); return; }
+        if (settingsDirty) {
+            new AlertDialog.Builder(this).setTitle("模型修改还没保存")
+                    .setMessage("不配置模型也可以继续选票。要先保存这次模型修改，还是放弃修改并前往下一步？")
+                    .setNegativeButton("返回编辑", (dialog, which) -> showScreen("settings"))
+                    .setPositiveButton("放弃修改并继续", (dialog, which) -> navigateToNextStep()).show();
+            return;
         }
-        journeyTitle.setText(title); journeyHint.setText(hint);
+        navigateToNextStep();
+    }
+
+    private void navigateToNextStep() {
+        updateJourney();
+        invalidatePreview(); cancelRequest("已前往下一步，停止等待模型回复。", true);
+        Intent next = "catalog".equals(navigatorStep.destination) ? new Intent(this, CatalogActivity.class)
+                : new Intent(this, MainActivity.class).putExtra("route", navigatorStep.destination);
+        next.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
+        startActivity(next); finish();
+    }
+
+    private void showNavigatorMenu() {
+        android.widget.PopupMenu menu = new android.widget.PopupMenu(this, settingsToggle);
+        menu.getMenu().add(0, 1, 0, "模型设置");
+        menu.getMenu().add(0, 2, 1, "查看发送内容");
+        menu.getMenu().add(0, 3, 2, "读一眼大麦页面");
+        menu.getMenu().add(0, 4, 3, "经验笔记");
+        menu.getMenu().add(0, 5, 4, "开始新问题");
+        android.view.SubMenu subjects = menu.getMenu().addSubMenu("换一个问题方向");
+        for (int i = 0; i < TOPICS.length; i++) subjects.add(1, 20 + i, i, TOPICS[i]);
+        menu.setOnMenuItemClickListener(item -> {
+            switch (item.getItemId()) {
+                case 1: showScreen("settings"); return true;
+                case 2: showScreen("ask"); toggleContextDrawer(); return true;
+                case 3: showScreen("ask"); requestCapture(); return true;
+                case 4: showScreen("notes"); return true;
+                case 5: showScreen("ask"); beginNewQuestion(); return true;
+                default:
+                    int index = item.getItemId() - 20;
+                    if (index >= 0 && index < TOPICS.length) { showScreen("ask"); selectTopic(TOPICS[index]); return true; }
+                    return false;
+            }
+        });
+        menu.show();
+    }
+
+    private void toggleContextDrawer() {
+        boolean open = contextDrawer.getVisibility() != View.VISIBLE;
+        contextDrawer.setVisibility(open ? View.VISIBLE : View.GONE);
+        reviewDetails.setVisibility(open && reviewedRequest != null ? View.VISIBLE : View.GONE);
+        reviewDetailsButton.setText(open ? "收起内容 ▴" : "发送内容 ▾");
+        if (open) scrollTo(contextDrawer);
+    }
+
+    private void showConversationQuestion(String value) {
+        conversationIntro.setVisibility(View.GONE);
+        if (resultCard.getVisibility() == View.VISIBLE && !resultText.getText().toString().isEmpty()) {
+            LinearLayout previous = column(); previous.setPadding(dp(16), dp(12), dp(16), dp(12));
+            previous.setBackground(background(CARD, CARD));
+            previous.addView(text("领航员", 12, ACCENT, true));
+            TextView reply = text(resultText.getText().toString(), 15, TEXT, false); reply.setTextIsSelectable(true);
+            previous.addView(reply, spaced(6));
+            dialogue.addView(previous, dialogue.indexOfChild(resultCard), spaced(8));
+        }
+        dialogue.removeView(resultCard);
+        LinearLayout user = column(); user.setPadding(dp(14), dp(10), dp(14), dp(10)); user.setBackground(background(TINT, TINT));
+        user.addView(text("你", 12, ACCENT, true)); TextView request = text(value, 15, TEXT, false);
+        request.setTextIsSelectable(true); user.addView(request, spaced(4));
+        dialogue.addView(user, spaced(12)); dialogue.addView(resultCard, spaced(8));
+        // Only the latest exchange is sent as context; older on-screen turns are bounded and never persisted.
+        while (dialogue.getChildCount() > 12) dialogue.removeViewAt(0);
     }
 
     private String suggestedQuestion() {
@@ -709,7 +876,7 @@ public final class AiAssistantActivity extends Activity {
                         }
                         context.applyDraft(draft);
                         startActivity(new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP)
-                                .putExtra("show_task", true));
+                                .putExtra("route", "plan"));
                         finish();
                     } catch (Exception e) { message("草稿尚未保存", "目标可能已变化或字段不完整，请重新分析并核对后再试。"); }
                 }).show();
@@ -752,18 +919,18 @@ public final class AiAssistantActivity extends Activity {
     private void updateControls() {
         boolean ready = !saving && !sending && !preparing && !loadingSettings;
         boolean configured = savedSettings.enabled && savedHasKey && savedSettings.validate().isEmpty();
-        previewButton.setText(sending ? "正在分析…" : preparing || loadingSettings ? "正在整理…"
-                : !configured ? "连接我的模型" : reviewedRequest == null ? "重新整理参考信息" : "发送给 AI");
+        previewButton.setText(preparing || loadingSettings ? "整理中" : !configured ? "连接 AI" : "发送");
+        previewButton.setVisibility(sending ? View.GONE : View.VISIBLE);
         previewButton.setEnabled(ready && usedToday >= 0 && (!configured || !question.getText().toString().trim().isEmpty()));
         testButton.setEnabled(ready && usedToday >= 0);
         saveSettingsButton.setEnabled(!saving && !loadingSettings); clearSettingsButton.setEnabled(!saving && !loadingSettings);
         settingsToggle.setEnabled(!saving); saveNoteButton.setEnabled(ready); applyDraftButton.setEnabled(ready);
         for (View control : settingsControls) control.setEnabled(!saving && !loadingSettings);
-        cancelButton.setVisibility(sending || preparing ? View.VISIBLE : View.GONE);
+        cancelButton.setVisibility(sending ? View.VISIBLE : View.GONE);
         settingsCancelButton.setVisibility(sending || preparing ? View.VISIBLE : View.GONE);
     }
 
-    @Override protected void onStart() { super.onStart(); foreground = true; if (context != null) { refreshCapture(); reloadSettings(false); } }
+    @Override protected void onStart() { super.onStart(); foreground = true; if (context != null) { refreshCapture(); updateJourney(); reloadSettings(false); } }
     @Override protected void onStop() {
         foreground = false; invalidatePreview(); cancelRequest("已切到后台，停止等待模型回复；不会自动重试。", true);
         restoring = true; if (apiKey != null) apiKey.setText(""); restoring = false;
@@ -798,6 +965,17 @@ public final class AiAssistantActivity extends Activity {
         input.setContentDescription(label); parent.addView(input, spaced(6));
         if (parent == settingsPanel) settingsControls.add(input);
         return input;
+    }
+    private Button textButton(String value, View.OnClickListener click) {
+        Button view = button(value, false, click); view.setTextColor(ACCENT); view.setTextSize(13);
+        view.setMinHeight(dp(36)); view.setMinWidth(0); view.setPadding(dp(6), dp(4), dp(6), dp(4));
+        view.setBackgroundColor(Color.TRANSPARENT); return view;
+    }
+    private Button chip(String value, View.OnClickListener click) {
+        Button view = textButton(value, click); view.setTextSize(12); view.setPadding(dp(12), dp(3), dp(12), dp(3));
+        view.setBackground(background(TINT, TINT));
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(-2, dp(36)); params.rightMargin = dp(8);
+        view.setLayoutParams(params); return view;
     }
     private CheckBox check(String value) { CheckBox view = new CheckBox(this); view.setText(value); view.setTextColor(TEXT); view.setTextSize(14); view.setMinHeight(dp(48)); view.setSaveEnabled(false); view.setButtonTintList(android.content.res.ColorStateList.valueOf(ACCENT)); return view; }
     private Button button(String value, boolean primary, View.OnClickListener click) { Button view = new Button(this); view.setText(value); view.setAllCaps(false); view.setTextSize(14); view.setTextColor(primary ? Color.WHITE : TEXT); view.setTypeface(Typeface.DEFAULT, Typeface.BOLD); view.setMinHeight(dp(50)); view.setPadding(dp(10), dp(10), dp(10), dp(10)); view.setBackground(background(primary ? ACCENT : CARD, primary ? ACCENT : BORDER)); view.setStateListAnimator(null); view.setOnClickListener(click); return view; }

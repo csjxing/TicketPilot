@@ -25,6 +25,7 @@
             </intent-filter>
         </activity>
         <activity android:name=".HelpActivity" android:exported="false" />
+        <activity android:name=".AdvancedSettingsActivity" android:exported="false" />
         <activity android:name=".AiAssistantActivity" android:exported="false" />
         <activity android:name=".TransferActivity" android:exported="false" />
         <activity android:name=".CatalogActivity" android:exported="false"
