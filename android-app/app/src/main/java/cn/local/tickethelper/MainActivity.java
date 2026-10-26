@@ -35,6 +35,7 @@ import cn.local.tickethelper.core.MonitorConfig;
 import cn.local.tickethelper.core.MonitorStopState;
 import cn.local.tickethelper.core.PilotJourney;
 import cn.local.tickethelper.core.TaskPreferences;
+import cn.local.tickethelper.core.AccessibilityReadiness;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -135,6 +136,7 @@ public final class MainActivity extends Activity {
     private String signature() {
         MonitorService s = MonitorService.instance;
         return route + '|' + store.getConfigRevision() + '|' + store.getStatus() + '|' + notificationsReady()
+                + '|' + AccessibilityAccess.state(this)
                 + '|' + (s != null) + '|' + (s != null && s.isRunning()) + '|' + (s == null ? 0 : s.waitingForDamaiSeconds())
                 + '|' + ShizukuInputBridge.get(this).status();
     }
@@ -287,16 +289,27 @@ public final class MainActivity extends Activity {
 
     private void renderSetup() {
         header("准备好这台手机","补齐下方未完成项，返回这里会自动检查进度。",() -> navigate("plan"));
-        boolean page=MonitorService.instance!=null,alerts=notificationsReady(),click=inputReady();
-        setupStep(1,"开启无障碍服务",page,"在系统设置中开启“票务助手 · 界面读取”，用于读取和点击大麦页面。TalkBack 保持关闭。");
+        AccessibilityReadiness.State access = AccessibilityAccess.state(this);
+        boolean page=access == AccessibilityReadiness.State.READY,alerts=notificationsReady(),click=inputReady();
+        String accessTitle = access == AccessibilityReadiness.State.READY ? "无障碍服务已连接"
+                : access == AccessibilityReadiness.State.ENABLED_DISCONNECTED ? "无障碍已开启，服务未连接"
+                : access == AccessibilityReadiness.State.UNKNOWN ? "暂时无法读取无障碍状态" : "开启无障碍服务";
+        String accessDetail = access == AccessibilityReadiness.State.ENABLED_DISCONNECTED
+                ? "系统已记录开启，但服务连接已中断。点下方重新连接，将“票务助手 · 界面读取”关闭后再开启，确认后返回。无需 TalkBack。"
+                : access == AccessibilityReadiness.State.UNKNOWN ? "进入系统确认“票务助手 · 界面读取”的状态，再返回这里检查。"
+                : "在系统设置中开启“票务助手 · 界面读取”，用于读取和点击大麦页面。TalkBack 保持关闭。";
+        setupStep(1,accessTitle,page,accessDetail);
         setupStep(2,"允许消息通知",alerts,"发现变化或需要你处理时通知你。");
         setupStep(3,"连接点击服务",click,AppStore.INPUT_SHIZUKU.equals(store.getInputMode())?ShizukuInputBridge.get(this).status():"当前使用标准触控，依赖页面读取服务。");
         if(!damaiInstalled())add(body,"尚未发现官方大麦，请先在手机安装。",14,INK,true,18);
         body.addView(textAction("这一步怎么做？让领航员带我  ↗",() -> openAi("异常分析","手机准备","请根据当前准备状态，明确我接下来只需要点哪个按钮、去哪个页面，完成后怎样返回。")),space(20));
         body.addView(textAction("点击方式与高级权限  ›",() -> openAdvanced("phone")),space(8));
-        String label=!page?"开启无障碍服务":!alerts?"允许提醒通知":!click?inputNextLabel():!damaiInstalled()?"查看安装说明":"准备完成，去选票";
+        String label=!page?(access == AccessibilityReadiness.State.OFF ? "开启无障碍服务"
+                : access == AccessibilityReadiness.State.UNKNOWN ? "查看系统无障碍设置" : "重新连接无障碍服务")
+                :!alerts?"允许提醒通知":!click?inputNextLabel():!damaiInstalled()?"查看安装说明":"准备完成，去选票";
         actionFooter(label,page&&alerts&&click&&damaiInstalled()?"返回计划，选择演出或开始。":"按提示完成后，再返回 TicketPilot。",() -> {
-            if(!page)discloseAccessibility();else if(!alerts)requestNotifications();else if(!click)prepareInput();else if(!damaiInstalled())message("需要大麦","请安装官方大麦并登录后返回。" );else navigate("plan");
+            if(!page){if(access == AccessibilityReadiness.State.OFF)discloseAccessibility();else openAccessibilitySettings();}
+            else if(!alerts)requestNotifications();else if(!click)prepareInput();else if(!damaiInstalled())message("需要大麦","请安装官方大麦并登录后返回。" );else navigate("plan");
         });
     }
 
@@ -317,7 +330,7 @@ public final class MainActivity extends Activity {
         section("维护",null,"");
         menuRow("高级工具","手动目标、兼容设置与导出",() -> openAdvanced("target"));
         menuRow("电脑接手与备份","源码、知识库与交接资料",() -> startActivity(new Intent(this,TransferActivity.class)));
-        add(body,"TicketPilot 0.2.2 · 支持1–2张选票计划\n自动锁票尚未开放，付款由你完成。",12,MUTED,false,28);
+        add(body,"TicketPilot 0.2.3 · 支持1–2张选票计划\n自动锁票尚未开放，付款由你完成。",12,MUTED,false,28);
         footer.setVisibility(View.GONE);
     }
 
@@ -443,8 +456,8 @@ public final class MainActivity extends Activity {
     }
 
     private boolean damaiInstalled(){return getPackageManager().getLaunchIntentForPackage("cn.damai")!=null;}
-    private boolean inputReady(){return AppStore.INPUT_SHIZUKU.equals(store.getInputMode())?ShizukuInputBridge.get(this).isReady():MonitorService.instance!=null;}
-    private boolean deviceReady(){return MonitorService.instance!=null&&notificationsReady()&&inputReady()&&damaiInstalled();}
+    private boolean inputReady(){return AppStore.INPUT_SHIZUKU.equals(store.getInputMode())?ShizukuInputBridge.get(this).isReady():AccessibilityAccess.state(this)==AccessibilityReadiness.State.READY;}
+    private boolean deviceReady(){return AccessibilityAccess.state(this)==AccessibilityReadiness.State.READY&&notificationsReady()&&inputReady()&&damaiInstalled();}
     private boolean notificationsReady(){
         NotificationManager n=getSystemService(NotificationManager.class);
         if(n==null||!n.areNotificationsEnabled()||(Build.VERSION.SDK_INT>=33&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED))return false;
@@ -460,7 +473,12 @@ public final class MainActivity extends Activity {
     private void discloseAccessibility(){
         new AlertDialog.Builder(this).setTitle("允许票务助手读取和操作大麦")
                 .setMessage("此服务在你主动选演出或启动后，读取真实大麦的可见页面并执行对应选票操作；必要时在手机本地识别文字，不上传截图。遇到验证、锁屏或未知页面会暂停。\n\n在系统无障碍设置找到“票务助手 · 界面读取”，开启服务开关。无需 TalkBack 或快捷方式。")
-                .setNegativeButton("取消",null).setPositiveButton("去系统开启",(d,w)->{try{startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS));}catch(RuntimeException e){toast("请从系统设置打开无障碍服务");}}).show();
+                .setNegativeButton("取消",null).setPositiveButton("去系统开启",(d,w)->openAccessibilitySettings()).show();
+    }
+
+    private void openAccessibilitySettings() {
+        try { AccessibilityAccess.openSettings(this); }
+        catch (RuntimeException unavailable) { toast("请从系统设置打开“票务助手 · 界面读取”。"); }
     }
 
     private String inputNextLabel(){String s=ShizukuInputBridge.get(this).status();return s.contains("未运行")||s.contains("尚未连接")?"打开 Shizuku 并启动":s.contains("尚未授权")?"允许票务助手使用":"连接点击服务";}
@@ -527,7 +545,7 @@ public final class MainActivity extends Activity {
         } catch (Exception e) { message("未能导出", "请换一个保存位置后重试。"); }
     }
 
-    @Override protected void onResume(){super.onResume();active=true;handler.removeCallbacks(refresh);handler.post(refresh);}
+    @Override protected void onResume(){super.onResume();active=true;if(!"preferences".equals(route))lastRender="";handler.removeCallbacks(refresh);handler.post(refresh);}
     @Override protected void onPause(){active=false;handler.removeCallbacks(refresh);super.onPause();}
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);render();}
     @Override public void onBackPressed(){if(!"plan".equals(route))navigate("plan");else super.onBackPressed();}

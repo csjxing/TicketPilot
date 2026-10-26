@@ -49,6 +49,7 @@ import java.util.concurrent.ThreadLocalRandom;
 /** User-armed local UI monitor. Final order input is separate from retryable SKU input; no payment actions. */
 public final class MonitorService extends AccessibilityService {
     public static MonitorService instance;
+    private volatile boolean connectionReady;
     private static final String TARGET = "cn.damai";
     private static final String ACTIVE = "monitor_status", ALERT = "monitor_alert";
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -91,6 +92,9 @@ public final class MonitorService extends AccessibilityService {
 
     @Override protected void onServiceConnected() {
         super.onServiceConnected();
+        connectionReady = false;
+        if (instance == this) instance = null;
+        try {
         cancelAiPageRead();
         boolean wasRunning = running;
         invalidateOrderAuthorization();
@@ -101,7 +105,7 @@ public final class MonitorService extends AccessibilityService {
         if (watchdog != null) { handler.removeCallbacks(watchdog); watchdog = null; }
         engine.reset(); transitionAction = Decision.Action.NONE;
         releaseConnectionResources();
-        instance = this; store = new AppStore(this); ocr = new OcrReader(this);
+        store = new AppStore(this); ocr = new OcrReader(this);
         inputBridge = ShizukuInputBridge.get(this);
         catalog = new CatalogController(this);
         // Reconnection never resumes a task without a new deliberate user start.
@@ -123,8 +127,20 @@ public final class MonitorService extends AccessibilityService {
         if (Build.VERSION.SDK_INT >= 33) registerReceiver(stopReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
         else registerReceiver(stopReceiver, filter);
         screenReceiverRegistered = true;
+        connectionReady = true; instance = this;
+        store.appendEvent("SERVICE", "connected_ready", 0);
+        } catch (RuntimeException failed) {
+            connectionReady = false;
+            if (instance == this) instance = null;
+            releaseConnectionResources();
+            if (store != null) {
+                store.recordMonitorStop("无障碍已开启，但服务初始化失败。请在系统中关闭再开启本服务。", "BLOCKED", false, false);
+                store.appendEvent("SERVICE", "initialization_failed:" + failed.getClass().getSimpleName(), 0);
+            }
+        }
     }
 
+    public boolean isConnectionReady() { return connectionReady; }
     public boolean isRunning() { return running; }
     /** One explicit read only. No network, navigation, clicks or model invocation. */
     public boolean requestAiPageRead() {
@@ -309,6 +325,7 @@ public final class MonitorService extends AccessibilityService {
 
     private void armInternal(LockAuthorization authorization) {
         if (running) return;
+        if (!connectionReady) return;
         closeInPlaceCatalog();
         if (catalog != null) catalog.cancelInternal(false);
         config = store.loadConfig();
@@ -1127,9 +1144,13 @@ public final class MonitorService extends AccessibilityService {
     }
 
     private void releaseConnectionResources() {
+        connectionReady = false;
         selectionStartGeneration++;
         closeInPlaceCatalog();
-        if (catalog != null) { catalog.close(); catalog = null; }
+        CatalogController previous = catalog; catalog = null;
+        if (previous != null) {
+            try { previous.close(); } catch (RuntimeException ignored) { /* Continue releasing remaining readers. */ }
+        }
         if (screenReceiverRegistered) {
             try { unregisterReceiver(stopReceiver); } catch (IllegalArgumentException ignored) { }
             screenReceiverRegistered = false;
@@ -1141,10 +1162,20 @@ public final class MonitorService extends AccessibilityService {
     }
 
     @Override public void onDestroy() {
+        connectionReady = false;
         cancelAiPageRead();
         pause("服务已断开，任务停止；重新连接后需手动开始。");
         releaseConnectionResources();
         if (instance == this) instance = null;
         super.onDestroy();
+    }
+
+    @Override public boolean onUnbind(Intent intent) {
+        connectionReady = false;
+        if (instance == this) instance = null;
+        cancelAiPageRead();
+        pause("无障碍连接已中断，任务已暂停；重新连接后需主动开始。");
+        releaseConnectionResources();
+        return super.onUnbind(intent);
     }
 }
