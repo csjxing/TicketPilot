@@ -156,7 +156,7 @@ public final class CatalogActivity extends Activity {
                 : "SESSIONS".equals(snapshot.stage) ? "哪一天方便去？" : "TIERS".equals(snapshot.stage) ? "这些票价，你接受哪些？"
                 : busy ? CatalogGuidance.busy(snapshot.status).title : "先解决这一步";
         addText(page, heading, 27, TEXT, true, 22);
-        String subheading = reviewRequested ? "保存后还不会运行，下一步设置购票方式。"
+        String subheading = reviewRequested ? "保存后返回计划页，核对条件再开始。"
                 : searching ? "输入艺人或演出名，去大麦读取真实结果。"
                 : "PROJECTS".equals(snapshot.stage) ? "点选一项，下一步读取这场演出的日期。"
                 : "SESSIONS".equals(snapshot.stage) ? "点一个日期和时间，下一步选票价。"
@@ -361,7 +361,7 @@ public final class CatalogActivity extends Activity {
             CatalogTier tier = snapshot.tiers.get(index);
             if (index % 2 == 0) { gridRow = new LinearLayout(this); gridRow.setOrientation(LinearLayout.HORIZONTAL); page.addView(gridRow, spaced(10)); }
             CheckBox choice = new CheckBox(this);
-            choice.setText("¥ " + tier.price + "\n" + tier.label + "\n" + availabilityLabel(tier.availability));
+            choice.setText("¥ " + tier.price + "\n" + availabilityLabel(tier.availability));
             choice.setTextColor(TEXT); choice.setTextSize(14); choice.setMinHeight(dp(108));
             choice.setPadding(dp(9), dp(12), dp(9), dp(12));
             choice.setButtonTintList(android.content.res.ColorStateList.valueOf(ACCENT));
@@ -401,7 +401,7 @@ public final class CatalogActivity extends Activity {
         page.addView(link("演出选错了？重新选择", v -> editEvent()), spaced(9));
         addText(page, "下一步：回到计划页，选择有票后的动作，再开始。", 14, TEXT, false, 14);
         addText(page, "保存不会提交订单。只有大麦确认待付款订单，才算锁票。", 12, MUTED, false, 8);
-        primary("保存计划，继续设置  →", "所选票价任选其一，至本场开演时停止", true, v -> saveReviewedSelection());
+        primary("保存到计划  →", "所选票价任选其一，至本场开演时停止", true, v -> saveReviewedSelection());
     }
 
     private void summaryRow(LinearLayout target, String label, String value, String action, View.OnClickListener listener) {
@@ -509,6 +509,9 @@ public final class CatalogActivity extends Activity {
             queryDraft = searchInput == null ? queryDraft : searchInput.getText().toString();
             InputMethodManager keyboard = getSystemService(InputMethodManager.class);
             if (keyboard != null) keyboard.hideSoftInputFromWindow(page.getWindowToken(), 0);
+            if (applyButton != null) applyButton.setEnabled(false);
+            // The controller requests normal Damai foreground navigation before this
+            // catalog task is removed; closing this task alone cannot restore Damai.
             action.run();
             if ("BUSY".equals(CatalogStore.get().stage)) finishAndRemoveTask();
             else render(CatalogStore.get());

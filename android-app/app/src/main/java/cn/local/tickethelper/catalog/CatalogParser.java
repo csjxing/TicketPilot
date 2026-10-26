@@ -272,10 +272,17 @@ public final class CatalogParser {
         UiItem region = uniqueRegion(items, "project_detail_perform_flowlayout");
         if (region == null) return List.of();
         Map<String, Entry<CatalogSession>> result = new LinkedHashMap<>();
+        boolean reservation = ReservationSessionParser.isReservationPage(items);
+        List<ReservationSessionParser.SessionCell> reserved = reservation ? ReservationSessionParser.sessions(items) : List.of();
         for (UiItem cell : cells(items, region)) {
             String label = cell.text.trim();
             if (!FULL_DATE.matcher(label).find() && !SHORT_DATE.matcher(label).find()) continue;
             String date = date(label, project.yearHint), time = time(label);
+            if (reservation) {
+                ReservationSessionParser.SessionCell identity = ReservationSessionParser.matching(reserved, cell);
+                if (identity == null) continue;
+                date = identity.date; time = identity.time;
+            }
             String key = "session:" + normalize(label);
             result.put(key, new Entry<>(new CatalogSession(key, label, date, time), cell));
         }

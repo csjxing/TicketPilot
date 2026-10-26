@@ -70,6 +70,8 @@ public final class MonitorService extends AccessibilityService {
     private String inputMode = AppStore.INPUT_ACCESSIBILITY;
     private boolean running, busy, targetSeen, screenReceiverRegistered;
     private long generation, windowGeneration, startedAt, lastNavigationAt, nextActionAt, lastCaptureAt, scheduledAt;
+    private long lastWindowChangeElapsed;
+    private String lastWindowEventSummary = "none";
     private long transitionAt;
     private Decision.Action transitionAction = Decision.Action.NONE;
     private String lastStatus = "";
@@ -176,6 +178,9 @@ public final class MonitorService extends AccessibilityService {
     CatalogController catalogController() { return catalog; }
     List<UiItem> catalogReadNodes() { return readNodes(); }
     long catalogWindowGeneration() { return windowGeneration; }
+    /** Main-thread timing/diagnostics only; these never replace the existing frame generation gate. */
+    long catalogLastWindowChangeElapsed() { return lastWindowChangeElapsed; }
+    String catalogLastWindowEventSummary() { return lastWindowEventSummary; }
 
     public void arm() {
         cancelAiPageRead();
@@ -280,19 +285,38 @@ public final class MonitorService extends AccessibilityService {
         // Catalog reads use the same fresh-page counter while normal monitoring remains paused.
         if (!running) {
             if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED
-                    || TARGET.equals(pkg)) windowGeneration++;
+                    || TARGET.equals(pkg)) recordWindowChange(type, pkg);
             return;
         }
         if (type == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED || type == AccessibilityEvent.TYPE_WINDOWS_CHANGED) {
-            windowGeneration++;
+            recordWindowChange(type, pkg);
             String active = foreground();
             if (targetSeen && !active.isEmpty() && !TARGET.equals(active)) {
                 stop("已切换应用或打开系统界面，任务暂停。", "UNRELATED", "foreground_changed", true); return;
             }
-        } else if (TARGET.equals(pkg)) windowGeneration++;
+        } else if (TARGET.equals(pkg)) recordWindowChange(type, pkg);
         if (!TARGET.equals(pkg)) return;
         // Events may shorten observation latency; actions still respect the configured interval.
         if (!busy) schedule(500);
+    }
+
+    /** Called at precisely the old generation-increment sites; no event is newly ignored. */
+    private void recordWindowChange(int type, String pkg) {
+        windowGeneration++;
+        lastWindowChangeElapsed = SystemClock.elapsedRealtime();
+        String source = TARGET.equals(pkg) ? "target" : getPackageName().equals(pkg) ? "helper"
+                : "android".equals(pkg) || "com.android.systemui".equals(pkg) || "com.android.settings".equals(pkg)
+                ? "system" : "other";
+        String event;
+        switch (type) {
+            case AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED: event = "window_state_changed"; break;
+            case AccessibilityEvent.TYPE_WINDOWS_CHANGED: event = "windows_changed"; break;
+            case AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED: event = "window_content_changed"; break;
+            case AccessibilityEvent.TYPE_VIEW_SELECTED: event = "view_selected"; break;
+            case AccessibilityEvent.TYPE_VIEW_CLICKED: event = "view_clicked"; break;
+            default: event = "other"; break;
+        }
+        lastWindowEventSummary = source + ":" + event;
     }
 
     public boolean isWaitingForDamai() { return running && !targetSeen; }
@@ -873,6 +897,10 @@ public final class MonitorService extends AccessibilityService {
 
     private static boolean evidenceContainer(String id) {
         return id.equals("cn.damai:id/ll_perform_item")
+                // Reservation SKU separates performance identity and sale-time text
+                // into empty native containers; their bounds are needed for scoped OCR.
+                || id.equals("cn.damai:id/item_flowlayout")
+                || id.equals("cn.damai:id/layout_time")
                 || id.equals("cn.damai:id/error_layout")
                 || id.equals("cn.damai:id/project_detail_perform_flowlayout")
                 || id.equals("cn.damai:id/project_detail_perform_price_flowlayout")

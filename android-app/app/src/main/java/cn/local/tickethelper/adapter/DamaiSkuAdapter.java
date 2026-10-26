@@ -4,6 +4,7 @@ import cn.local.tickethelper.core.Observation;
 import cn.local.tickethelper.core.PageFailureSignals;
 import cn.local.tickethelper.core.UiItem;
 import cn.local.tickethelper.catalog.CatalogSelection;
+import cn.local.tickethelper.catalog.ReservationSessionParser;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -46,6 +47,21 @@ public final class DamaiSkuAdapter {
         List<UiItem> visible = new ArrayList<>(nodes); visible.addAll(ocr);
         if (PageFailureSignals.blocksSelection(visible)) return new Result(original, null);
         if (pixels == null || observedAtMs <= 0) return new Result(original, null);
+        if (ReservationSessionParser.isReservationPage(visible)) {
+            UiItem selectedBounds = null;
+            for (UiItem bounds : ReservationSessionParser.nativeSessionCells(visible)) {
+                if (!orangeBorder(pixels, bounds)) continue;
+                // Count candidates before parsing; an unreadable second selection is still ambiguous.
+                if (selectedBounds != null) return new Result(original, null);
+                selectedBounds = bounds;
+            }
+            ReservationSessionParser.SessionCell selected = selectedBounds == null ? null
+                    : ReservationSessionParser.matching(ReservationSessionParser.sessions(visible), selectedBounds);
+            CatalogSelection selection = selected == null || !orangeSemanticText(pixels, selected.semanticLines, true)
+                    ? null : new CatalogSelection(observedAtMs, selected.date, selected.time);
+            // Reservation pages never enter the monitor's purchase/confirmation evidence path.
+            return new Result(original, null, selection);
+        }
         UiItem sessionRegion = unique(nodes, "project_detail_perform_flowlayout");
         UiItem priceRegion = unique(nodes, "project_detail_perform_price_flowlayout");
         if (sessionRegion == null || priceRegion == null || sessionRegion.bottom > priceRegion.top)

@@ -4,7 +4,7 @@ import cn.local.tickethelper.core.MonitorStopState;
 
 /** Navigation is selected from verified local state, never from model-generated instructions. */
 public enum NavigatorStep {
-    SETUP("手机准备", "先把手机准备好", "允许读取大麦页面并连接点击服务。完成后，就能在这里选择演出。", "去完成手机准备", "setup"),
+    SETUP("手机准备", "先把手机准备好", "开启“票务助手 · 界面读取”无障碍服务，再连接点击服务。完成后，就能在这里选择演出。", "去完成手机准备", "setup"),
     EVENT("选演出", "先找到想看的演出", "搜索艺人或演出名，再从真实大麦结果里选择城市和项目。", "去选演出", "catalog"),
     SESSION("选场次", "选一个方便的时间", "点选日期和开演时间，下一步会读出这一场的票价。", "去选场次", "catalog"),
     PRICE("选票价", "告诉我哪些票价可以", "勾选你接受的票价，可以多选；核对后保存到计划。", "去选票价", "catalog"),

@@ -197,14 +197,15 @@ public final class MainActivity extends Activity {
     private void renderTicket(MonitorConfig c) {
         add(body,"我的购票计划",13,MUTED,true,24);
         LinearLayout ticket = column(); ticket.setPadding(dp(20),dp(22),dp(20),dp(20)); ticket.setBackground(shape(Color.WHITE,LINE,20));
-        LinearLayout top = row(); top.addView(tag(c.city.isBlank() ? "城市待选" : c.city,BLUE,TINT),weighted());
+        LinearLayout top = row(); top.addView(tag(c.city.isBlank() ? "城市待选" : c.city,BLUE,TINT));
+        top.addView(new View(this),weighted());
         top.addView(text("01 / TICKET",11,MUTED,true)); ticket.addView(top);
         String title = CatalogActivity.selectedTitle(this,c); if (title.isBlank()) title=c.eventKeyword;
         add(ticket,title,23,INK,true,18);
         add(ticket,displayDate(c) + "  " + c.time,15,MUTED,false,10);
         View divider = new View(this); divider.setBackgroundColor(LINE); LinearLayout.LayoutParams dividerParams=space(20);dividerParams.height=dp(1);ticket.addView(divider,dividerParams);
         LinearLayout bottom=row(); LinearLayout money=column();
-        add(money,priceText(c),22,INK,true,0); add(money,"接受票价 · 尚未生成订单",11,MUTED,false,4);
+        add(money,priceText(c),22,INK,true,0); add(money,"接受票价",11,MUTED,false,4);
         bottom.addView(money,weighted());bottom.addView(tag(c.quantity+" 张",BLUE,TINT));ticket.addView(bottom,space(18));
         ticket.addView(textAction("修改演出 / 场次 / 票价  ›", this::openCatalog),space(14));body.addView(ticket,space(10));
     }
@@ -219,11 +220,15 @@ public final class MainActivity extends Activity {
         LinearLayout speeds=row();
         paceChip(speeds,"快速","0.5–1.5秒",500,1500);paceChip(speeds,"常用","1–3秒",1000,3000);paceChip(speeds,"稳健","5–10秒",5000,10000);
         body.addView(speeds,space(12));
-        body.addView(textAction(customPace ? "自定义间隔已展开" : "自定义间隔  ›", () -> {customPace=true;render();}),space(9));
+        if(customPace) add(body,"自定义间隔（秒）",14,MUTED,false,16);
+        else body.addView(textAction("自定义间隔  ›", () -> {customPace=true;render();}),space(9));
         minimum=null;maximum=null;
         if(customPace) {
             LinearLayout inputs=row();minimum=number(draftMin == null ? IntervalSeconds.format(preferredMin) : draftMin,"最短秒数");maximum=number(draftMax == null ? IntervalSeconds.format(preferredMax) : draftMax,"最长秒数");
-            inputs.addView(minimum,weighted());LinearLayout.LayoutParams gap=weighted();gap.leftMargin=dp(12);inputs.addView(maximum,gap);body.addView(inputs,space(9));
+            LinearLayout shorter=column(),longer=column();
+            shorter.addView(text("最短等待（秒）",12,MUTED,false));shorter.addView(minimum,space(8));
+            longer.addView(text("最长等待（秒）",12,MUTED,false));longer.addView(maximum,space(8));
+            inputs.addView(shorter,weighted());LinearLayout.LayoutParams gap=weighted();gap.leftMargin=dp(12);inputs.addView(longer,gap);body.addView(inputs,space(9));
         }
         add(body,"这是操作后的等待区间，页面加载另需时间。",12,MUTED,false,12);
         body.addView(textAction("让领航员解释怎么选  ↗", () -> openAi("配置建议","购票条件","请解释提醒、选票到确认页的区别，以及快速、常用、稳健的操作节奏。不要承诺服务器刷新频率或购票成功。")),space(12));
@@ -288,15 +293,15 @@ public final class MainActivity extends Activity {
     }
 
     private void renderSetup() {
-        header("准备好这台手机","只需完成一次；返回这里会自动检查进度。",() -> navigate("plan"));
+        header("准备好这台手机","补齐下方未完成项，返回这里会自动检查进度。",() -> navigate("plan"));
         boolean page=MonitorService.instance!=null,alerts=notificationsReady(),click=inputReady();
-        setupStep(1,"读取大麦页面",page,"只开启票务助手服务，无需 TalkBack。");
-        setupStep(2,"收到有票提醒",alerts,"发现变化或需要你处理时通知你。");
+        setupStep(1,"开启无障碍服务",page,"在系统设置中开启“票务助手 · 界面读取”，用于读取和点击大麦页面。TalkBack 保持关闭。");
+        setupStep(2,"允许消息通知",alerts,"发现变化或需要你处理时通知你。");
         setupStep(3,"连接点击服务",click,AppStore.INPUT_SHIZUKU.equals(store.getInputMode())?ShizukuInputBridge.get(this).status():"当前使用标准触控，依赖页面读取服务。");
         if(!damaiInstalled())add(body,"尚未发现官方大麦，请先在手机安装。",14,INK,true,18);
         body.addView(textAction("这一步怎么做？让领航员带我  ↗",() -> openAi("异常分析","手机准备","请根据当前准备状态，明确我接下来只需要点哪个按钮、去哪个页面，完成后怎样返回。")),space(20));
         body.addView(textAction("点击方式与高级权限  ›",() -> openAdvanced("phone")),space(8));
-        String label=!page?"开启页面读取":!alerts?"允许提醒通知":!click?inputNextLabel():!damaiInstalled()?"查看安装说明":"准备完成，去选票";
+        String label=!page?"开启无障碍服务":!alerts?"允许提醒通知":!click?inputNextLabel():!damaiInstalled()?"查看安装说明":"准备完成，去选票";
         actionFooter(label,page&&alerts&&click&&damaiInstalled()?"返回计划，选择演出或开始。":"按提示完成后，再返回 TicketPilot。",() -> {
             if(!page)discloseAccessibility();else if(!alerts)requestNotifications();else if(!click)prepareInput();else if(!damaiInstalled())message("需要大麦","请安装官方大麦并登录后返回。" );else navigate("plan");
         });
@@ -309,7 +314,7 @@ public final class MainActivity extends Activity {
     }
 
     private void renderAccount() {
-        add(body,"我的",30,INK,true,8);add(body,"把工具留在这里，把注意力留给现场。",14,MUTED,false,8);
+        add(body,"我的",30,INK,true,8);add(body,"管理模型、手机权限和购票条件。",14,MUTED,false,8);
         section("常用",null,"");
         menuRow("AI 模型","接口、密钥与用量",() -> {pause("正在设置模型，监控暂停。");startActivity(new Intent(this,AiAssistantActivity.class).putExtra("screen","settings").putExtra("origin_label","我的"));});
         menuRow("手机准备",deviceReady()?"已具备运行条件":"检查还缺哪一步",() -> navigate("setup"));
