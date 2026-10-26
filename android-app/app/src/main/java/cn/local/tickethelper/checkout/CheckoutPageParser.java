@@ -64,8 +64,9 @@ public final class CheckoutPageParser {
             int declaredRows = integer(reader.value(Role.VIEWER_COUNT), 1, 128);
             boolean allRows = declaredRows == rows.size();
             ViewerMatcher.Result viewer = resolver == null ? null : resolver.resolve(List.copyOf(rows), allRows);
-            boolean selected = allRows && viewer != null && viewer.state == ViewerMatcher.State.VERIFIED_SELECTED;
-            boolean matched = allRows && viewer != null && (selected || viewer.state == ViewerMatcher.State.SELECT_PROPOSAL);
+            boolean matchingCount = viewer != null && viewer.viewerCount == quantity;
+            boolean selected = allRows && matchingCount && viewer.state == ViewerMatcher.State.VERIFIED_SELECTED;
+            boolean matched = allRows && matchingCount && (selected || viewer.state == ViewerMatcher.State.SELECT_PROPOSAL);
             CheckoutObservation.Builder observation = new CheckoutObservation.Builder(page.kind, frame.observedAtMs)
                     .frame(frame.packageName, frame.windowId, frame.generationAfter, true, true)
                     .relatedAttempt(relatedAttemptId).target(title, city, date, time)
@@ -99,7 +100,8 @@ public final class CheckoutPageParser {
             }
             // A candidate checkbox click is never promoted to a verified attendee selection.
             return new CheckoutParseResult(selected ? Status.PARSED : Status.INCOMPLETE, observation.build(),
-                    selected ? "native_checkout_facts_parsed" : "viewer_selection_unverified", viewer);
+                    selected ? "native_checkout_facts_parsed" : "viewer_selection_unverified",
+                    matchingCount || (viewer != null && viewer.state == ViewerMatcher.State.UNCERTAIN) ? viewer : null);
         } catch (ParseFailure failure) {
             return failed(frame, failure.status, failure.code, relatedAttemptId);
         } catch (ArithmeticException | DateTimeException invalid) {

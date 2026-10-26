@@ -5,6 +5,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
 import java.util.Locale;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 
 /** One explicit user grant for this exact configuration. Saving LOCK_ORDER does not create a grant. */
 public final class LockAuthorization {
@@ -39,5 +42,17 @@ public final class LockAuthorization {
         String name = CheckoutIdentity.clean(displayName), suffix = CheckoutIdentity.clean(documentSuffix).toUpperCase(Locale.ROOT);
         if (name.isEmpty() || name.length() > 80 || (!suffix.isEmpty() && !suffix.matches("[0-9A-Z]{2,6}"))) return "";
         return CheckoutIdentity.hash(CheckoutIdentity.part(name) + CheckoutIdentity.part(suffix));
+    }
+
+    /** Same single-person digest as older versions; a two-person party is order-independent. */
+    public static String viewerBindingsHash(List<ViewerMatcher.RequestedViewer> viewers) {
+        if (!ViewerMatcher.validRequests(viewers)) return "";
+        List<String> bindings = new ArrayList<>();
+        for (ViewerMatcher.RequestedViewer viewer : viewers)
+            bindings.add(viewerBindingHash(viewer.displayName, viewer.documentSuffix));
+        if (bindings.size() == 1) return bindings.get(0);
+        Collections.sort(bindings);
+        return CheckoutIdentity.hash("tickethelper-viewers-v1|" + bindings.size() + "|"
+                + CheckoutIdentity.part(bindings.get(0)) + CheckoutIdentity.part(bindings.get(1)));
     }
 }

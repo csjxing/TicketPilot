@@ -18,6 +18,15 @@ import java.util.regex.Pattern;
 public final class ViewerMatcher {
     public enum State { VERIFIED_SELECTED, SELECT_PROPOSAL, UNCERTAIN }
 
+    /** Local user-requested identity. Never include these fields in logs or public exports. */
+    public static final class RequestedViewer {
+        public final String displayName, documentSuffix;
+        public RequestedViewer(String displayName, String documentSuffix) {
+            this.displayName = clean(displayName);
+            this.documentSuffix = clean(documentSuffix).toUpperCase(Locale.ROOT);
+        }
+    }
+
     /** rowKey is a unique ephemeral node/row identity, not a name or document number. */
     public static final class ViewerRow {
         public final String rowKey, visibleName, visibleDocument;
@@ -40,14 +49,29 @@ public final class ViewerMatcher {
     public static final class Result {
         public final State state;
         public final String bindingHash, reason;
+        /** Opaque identity of the single proposed person, independent of native row order/geometry. */
+        public final String selectionIdentityHash;
+        /** Number of distinct requested rows actually matched in this frame; zero if uncertain. */
+        public final int viewerCount;
         /** Non-null only for SELECT_PROPOSAL. Text is deliberately empty to avoid retaining PII. */
         public final UiItem selectionTarget;
 
         private Result(State state, String bindingHash, String reason, UiItem selectionTarget) {
+            this(state, bindingHash, reason, selectionTarget, state == State.UNCERTAIN ? 0 : 1);
+        }
+
+        private Result(State state, String bindingHash, String reason, UiItem selectionTarget, int viewerCount) {
+            this(state, bindingHash, reason, selectionTarget, viewerCount, state == State.SELECT_PROPOSAL ? bindingHash : "");
+        }
+
+        private Result(State state, String bindingHash, String reason, UiItem selectionTarget, int viewerCount,
+                       String selectionIdentityHash) {
             this.state = state;
             this.bindingHash = bindingHash;
             this.reason = reason;
             this.selectionTarget = selectionTarget;
+            this.viewerCount = viewerCount;
+            this.selectionIdentityHash = selectionIdentityHash;
         }
     }
 
@@ -142,6 +166,88 @@ public final class ViewerMatcher {
         UiItem redacted = new UiItem("", node.left, node.top, node.right, node.bottom,
                 node.enabled, node.clickable, false, UiItem.Source.NODE, node.resourceId);
         return new Result(State.SELECT_PROPOSAL, binding, "unique_unselected_viewer", redacted);
+    }
+
+    /**
+     * Match one or two requested people against the complete same-frame native scope. One call
+     * proposes at most one checkbox; all requested people must be reread as selected to verify.
+     * Other selected people are never silently deselected or accepted as the requested party.
+     */
+    public static Result matchMany(List<RequestedViewer> requested, List<ViewerRow> rows, boolean completeNativeRows) {
+        if (!validRequests(requested)) return uncertain("invalid_viewer_config");
+        if (requested.size() == 1) {
+            RequestedViewer one = requested.get(0);
+            return match(one.displayName, one.documentSuffix, rows, completeNativeRows);
+        }
+        if (!completeNativeRows) return uncertain("incomplete_native_viewer_scope");
+        if (rows == null || rows.isEmpty()) return uncertain("viewer_rows_missing");
+        if (rows.size() > MAX_ROWS) return uncertain("viewer_scope_too_large");
+        Set<String> rowKeys = new HashSet<>(), controls = new HashSet<>();
+        for (ViewerRow row : rows) {
+            if (row == null || row.rowKey.isEmpty()) return uncertain("viewer_row_identity_missing");
+            if (!rowKeys.add(row.rowKey)) return uncertain("duplicate_viewer_row");
+            if (row.protectedControl) return uncertain("protected_viewer_control");
+            if (!completeName(row.visibleName)) return uncertain("viewer_name_incomplete");
+            UiItem node = row.selectionTarget;
+            if (node == null || node.source != UiItem.Source.NODE || !node.hasBounds())
+                return uncertain("native_selection_control_missing");
+            if (!row.selectionKnown) return uncertain("viewer_selection_unknown");
+            if (node.selected != row.checked) return uncertain("viewer_selection_conflict");
+            if (!controls.add(node.left + ":" + node.top + ":" + node.right + ":" + node.bottom))
+                return uncertain("duplicate_viewer_control");
+        }
+        List<ViewerRow> targets = new ArrayList<>();
+        List<RequestedViewer> observed = new ArrayList<>();
+        Set<String> matchedRows = new HashSet<>();
+        for (RequestedViewer request : requested) {
+            ViewerRow target = null; String observedSuffix = ""; boolean sameName = false;
+            for (ViewerRow row : rows) {
+                if (!row.visibleName.equals(request.displayName)) continue;
+                sameName = true;
+                String candidateSuffix = "";
+                if (!request.documentSuffix.isEmpty()) {
+                    String tail = documentTail(row.visibleDocument);
+                    if (tail.length() < request.documentSuffix.length()) return uncertain("viewer_suffix_not_visible");
+                    candidateSuffix = tail.substring(tail.length() - request.documentSuffix.length());
+                    if (!candidateSuffix.equals(request.documentSuffix)) continue;
+                }
+                if (target != null) return uncertain("ambiguous_viewer_match");
+                target = row; observedSuffix = candidateSuffix;
+            }
+            if (!sameName) return uncertain("viewer_not_found");
+            if (target == null) return uncertain("viewer_suffix_mismatch");
+            if (!matchedRows.add(target.rowKey)) return uncertain("duplicate_requested_viewer");
+            targets.add(target); observed.add(new RequestedViewer(target.visibleName, observedSuffix));
+        }
+        for (ViewerRow row : rows) if (row.checked && !matchedRows.contains(row.rowKey))
+            return uncertain("different_viewer_selected");
+        String binding = LockAuthorization.viewerBindingsHash(observed);
+        if (binding.isEmpty()) return uncertain("viewer_binding_invalid");
+        ViewerRow unselected = null;
+        for (ViewerRow target : targets) if (!target.checked) {
+            if (!target.selectionTarget.enabled || !target.selectionTarget.clickable)
+                return uncertain("viewer_control_not_actionable");
+            if (unselected == null) unselected = target;
+        }
+        if (unselected == null)
+            return new Result(State.VERIFIED_SELECTED, binding, "requested_viewers_selected", null, targets.size());
+        UiItem node = unselected.selectionTarget;
+        UiItem redacted = new UiItem("", node.left, node.top, node.right, node.bottom,
+                node.enabled, node.clickable, false, UiItem.Source.NODE, node.resourceId);
+        RequestedViewer proposed = observed.get(targets.indexOf(unselected));
+        String selectionIdentity = LockAuthorization.viewerBindingHash(proposed.displayName, proposed.documentSuffix);
+        return new Result(State.SELECT_PROPOSAL, binding, "requested_viewer_unselected", redacted, targets.size(), selectionIdentity);
+    }
+
+    static boolean validRequests(List<RequestedViewer> requested) {
+        if (requested == null || requested.isEmpty() || requested.size() > 2) return false;
+        Set<String> identities = new HashSet<>();
+        for (RequestedViewer request : requested) {
+            if (request == null || !completeName(request.displayName)
+                    || (!request.documentSuffix.isEmpty() && !request.documentSuffix.matches("[0-9A-Z]{2,6}"))) return false;
+            if (!identities.add(LockAuthorization.viewerBindingHash(request.displayName, request.documentSuffix))) return false;
+        }
+        return true;
     }
 
     private static Result uncertain(String reason) {

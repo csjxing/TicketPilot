@@ -730,6 +730,10 @@ public final class AiAssistantActivity extends Activity {
     private void navigateToNextStep() {
         updateJourney();
         invalidatePreview(); cancelRequest("已前往下一步，停止等待模型回复。", true);
+        if ("catalog".equals(navigatorStep.destination)) {
+            MonitorService monitor = MonitorService.instance;
+            if (monitor != null) { monitor.openInPlaceCatalog(); finish(); return; }
+        }
         Intent next = "catalog".equals(navigatorStep.destination) ? new Intent(this, CatalogActivity.class)
                 : new Intent(this, MainActivity.class).putExtra("route", navigatorStep.destination);
         next.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);

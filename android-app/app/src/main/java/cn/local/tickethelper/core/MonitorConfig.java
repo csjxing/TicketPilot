@@ -56,7 +56,7 @@ public final class MonitorConfig {
         if (prices.isEmpty() || prices.size() > 20) errors.add("请设置 1 至 20 个票价");
         if (prices.stream().anyMatch(p -> p == null || p <= 0 || p > 100000)) errors.add("票价必须为 1 至 100000 元");
         if (new HashSet<>(prices).size() != prices.size()) errors.add("票价不能重复");
-        if (quantity != 1) errors.add("此版本仅支持 1 张，最终提交前由你核对观演人");
+        if (quantity < 1 || quantity > 2) errors.add("请选择 1 至 2 张，最终提交前核对对应观演人");
         if (maxTotal <= 0 || maxTotal > 100000) errors.add("总预算必须为 1 至 100000 元");
         if (prices.stream().filter(p -> p != null).anyMatch(p -> (long) p * quantity > maxTotal))
             errors.add("总预算不能低于任一接受票价的票款");

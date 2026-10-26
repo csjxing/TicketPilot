@@ -4,6 +4,8 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import cn.local.tickethelper.core.MonitorConfig;
 import cn.local.tickethelper.core.MonitorStopState;
+import cn.local.tickethelper.checkout.ViewerMatcher;
+import cn.local.tickethelper.checkout.LockAuthorization;
 import org.json.JSONArray;
 import org.json.JSONObject;
 import java.io.BufferedReader;
@@ -105,6 +107,7 @@ public final class AppStore {
                     .putString("mode", config.mode.name()).putBoolean("armed", false)
                     .putBoolean("imported_target_pending_review", true)
                     .putString("viewer_display_name", "").putString("viewer_document_suffix", "")
+                    .remove("viewer_bindings_json")
                     .putLong("config_revision", prefs.getLong("config_revision", 0) + 1).commit();
             if (saved) {
                 catalogDisplay.edit().clear().apply();
@@ -139,6 +142,7 @@ public final class AppStore {
                     .putLong("minIntervalMs", config.minIntervalMs).putLong("maxIntervalMs", config.maxIntervalMs)
                     .putString("mode", config.mode.name()).putBoolean("armed", false)
                     .putString("viewer_display_name", "").putString("viewer_document_suffix", "")
+                    .remove("viewer_bindings_json")
                     .putBoolean("imported_target_pending_review", true)
                     .putLong("config_revision", prefs.getLong("config_revision", 0) + 1).commit();
             if (saved) {
@@ -154,6 +158,50 @@ public final class AppStore {
     /** Local matching data only: never pass these values to status, history, notifications or export. */
     public String getViewerDisplayName() { return prefs.getString("viewer_display_name", ""); }
     public String getViewerDocumentSuffix() { return prefs.getString("viewer_document_suffix", ""); }
+    public List<ViewerMatcher.RequestedViewer> getViewerBindings() {
+        synchronized (LOCK) {
+            if (!prefs.contains("viewer_bindings_json")) {
+                String name = getViewerDisplayName();
+                return name.isEmpty() ? List.of() : List.of(new ViewerMatcher.RequestedViewer(name, getViewerDocumentSuffix()));
+            }
+            try {
+                JSONArray raw = new JSONArray(prefs.getString("viewer_bindings_json", ""));
+                if (raw.length() < 1 || raw.length() > 2) return List.of();
+                List<ViewerMatcher.RequestedViewer> result = new ArrayList<>();
+                for (int i = 0; i < raw.length(); i++) {
+                    JSONObject row = raw.getJSONObject(i);
+                    result.add(new ViewerMatcher.RequestedViewer(row.getString("name"), row.getString("suffix")));
+                }
+                return LockAuthorization.viewerBindingsHash(result).isEmpty() ? List.of() : List.copyOf(result);
+            } catch (Exception invalid) { return List.of(); }
+        }
+    }
+
+    public void saveViewerBindings(List<ViewerMatcher.RequestedViewer> viewers) {
+        if (viewers == null || viewers.size() < 1 || viewers.size() > 2)
+            throw new IllegalArgumentException("请填写与票数一致的观演人。");
+        JSONArray data = new JSONArray();
+        for (ViewerMatcher.RequestedViewer viewer : viewers) {
+            if (viewer == null || viewer.displayName == null || viewer.documentSuffix == null)
+                throw new IllegalArgumentException("请填写完整姓名。");
+            String name = viewer.displayName.trim(), suffix = viewer.documentSuffix.trim().toUpperCase(Locale.ROOT);
+            if (name.isEmpty() || name.length() > 80 || name.chars().anyMatch(Character::isISOControl)
+                    || name.matches(".*[*＊•…].*") || java.util.regex.Pattern.compile("\\d{8,}").matcher(name).find()
+                    || (!suffix.isEmpty() && !suffix.matches("[A-Z0-9]{2,6}")))
+                throw new IllegalArgumentException("请填写完整姓名；证件尾号可留空，或填写2至6位字母数字。");
+            try { data.put(new JSONObject().put("name", name).put("suffix", suffix)); }
+            catch (Exception invalid) { throw new IllegalArgumentException("观演人信息无法保存。"); }
+        }
+        if (LockAuthorization.viewerBindingsHash(viewers).isEmpty())
+            throw new IllegalArgumentException("两位观演人必须能分别确认，请检查重复姓名和尾号。");
+        if (viewers.size() == 1) { saveViewerBinding(viewers.get(0).displayName, viewers.get(0).documentSuffix); return; }
+        synchronized (LOCK) {
+            if (data.toString().equals(prefs.getString("viewer_bindings_json", ""))) return;
+            prefs.edit().putString("viewer_bindings_json", data.toString())
+                    .putString("viewer_display_name", "").putString("viewer_document_suffix", "")
+                    .putBoolean("armed", false).putLong("config_revision", prefs.getLong("config_revision", 0) + 1).apply();
+        }
+    }
     public void saveViewerBinding(String displayName, String documentSuffix) {
         String name = displayName == null ? "" : displayName.trim();
         String suffix = documentSuffix == null ? "" : documentSuffix.trim().toUpperCase(Locale.ROOT);
@@ -162,8 +210,10 @@ public final class AppStore {
                 || (!suffix.isEmpty() && !suffix.matches("[A-Z0-9]{2,6}")))
             throw new IllegalArgumentException("Invalid local viewer binding");
         synchronized (LOCK) {
-            if (name.equals(getViewerDisplayName()) && suffix.equals(getViewerDocumentSuffix())) return;
+            if (name.equals(getViewerDisplayName()) && suffix.equals(getViewerDocumentSuffix())
+                    && !prefs.contains("viewer_bindings_json")) return;
             prefs.edit().putString("viewer_display_name", name).putString("viewer_document_suffix", suffix)
+                    .remove("viewer_bindings_json")
                     .putBoolean("armed", false)
                     .putLong("config_revision", prefs.getLong("config_revision", 0) + 1).apply();
         }

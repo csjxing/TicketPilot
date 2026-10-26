@@ -422,6 +422,47 @@ public class CheckoutPageParserTest {
     private static CheckoutPageParser.ViewerResolver resolver() {
         return (rows,complete) -> ViewerMatcher.match(PERSON,"1234",rows,complete);
     }
+    @Test public void twoTicketsNeedBothRequestedPeopleSelectedInTheSameNativeScope() {
+        Fixture f = twoPeopleFixture();
+        List<ViewerMatcher.RequestedViewer> requested = List.of(new ViewerMatcher.RequestedViewer(PERSON,"1234"),
+                new ViewerMatcher.RequestedViewer("第二位合成观演人","5678"));
+        CheckoutParseResult result = CheckoutPageParser.parse(f.frame(),f.profile(),NOW,
+                (rows,complete) -> ViewerMatcher.matchMany(requested,rows,complete));
+        assertEquals(CheckoutParseResult.Status.PARSED,result.status);
+        assertEquals(Integer.valueOf(2),result.observation.quantity);
+        assertTrue(result.observation.viewerSelectionVerified);
+        assertEquals(2,result.viewerResult.viewerCount);
+        assertEquals(LockAuthorization.viewerBindingsHash(requested),result.observation.selectedViewerBindingHash);
+        f.flags("selection2",true,true,false,false);
+        result = CheckoutPageParser.parse(f.frame(),f.profile(),NOW,
+                (rows,complete) -> ViewerMatcher.matchMany(requested,rows,complete));
+        assertEquals(CheckoutParseResult.Status.INCOMPLETE,result.status);
+        assertFalse(result.observation.viewerSelectionVerified);
+        assertEquals(ViewerMatcher.State.SELECT_PROPOSAL,result.viewerResult.state);
+    }
+    @Test public void matchedViewerCountMustEqualTicketQuantityBeforeAnySelectionProposalOrVerification() {
+        Fixture twoTickets = new Fixture(false);
+        twoTickets.text("quantity","数量：2张"); twoTickets.text("subtotal","票款小计：1960元"); twoTickets.text("payable","应付：1960元");
+        CheckoutParseResult result = twoTickets.parse();
+        assertNotParsed(result); assertEquals("",result.observation.selectedViewerBindingHash); assertNull(result.viewerResult);
+        Fixture oneTicket = twoPeopleFixture();
+        oneTicket.text("quantity","数量：1张"); oneTicket.text("subtotal","票款小计：980元"); oneTicket.text("payable","应付：980元");
+        List<ViewerMatcher.RequestedViewer> requested = List.of(new ViewerMatcher.RequestedViewer(PERSON,"1234"),
+                new ViewerMatcher.RequestedViewer("第二位合成观演人","5678"));
+        result = CheckoutPageParser.parse(oneTicket.frame(),oneTicket.profile(),NOW,
+                (rows,complete) -> ViewerMatcher.matchMany(requested,rows,complete));
+        assertNotParsed(result); assertEquals("",result.observation.selectedViewerBindingHash); assertNull(result.viewerResult);
+    }
+    private static Fixture twoPeopleFixture() {
+        Fixture f = new Fixture(false);
+        f.text("quantity","数量：2张"); f.text("subtotal","票款小计：1960元"); f.text("payable","应付：1960元");
+        f.text("viewer_count","观演人共：2人");
+        f.add("row2","viewers","row","",false,false,false);
+        f.add("name2","row2","name","姓名：第二位合成观演人",false,false,false);
+        f.add("document2","row2","document","证件：****5678",false,false,false);
+        f.add("selection2","row2","selection","",true,true,true);
+        return f;
+    }
     @Test public void structuralSubmitProducesAProfileBindingOnlyAfterExactParsing() {
         Fixture f=new Fixture(false); f.remove("submit");
         f.add("actions/0","actions","submit_group","",false,false,false);

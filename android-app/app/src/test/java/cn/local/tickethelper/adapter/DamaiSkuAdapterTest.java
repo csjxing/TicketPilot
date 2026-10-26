@@ -80,6 +80,18 @@ public class DamaiSkuAdapterTest {
         assertEquals(Integer.valueOf(2), adapt().evidence.quantity);
         assertEquals(Integer.valueOf(1960), adapt().evidence.totalYuan);
     }
+    @Test public void twoTicketsAt1680RetainSameFramePriceQuantityAnd3360Total() {
+        replaceNode("tv_num", "2张"); replaceNode("tv_price", "3360");
+        lines.removeIf(i -> i.text.equals("1张") || i.text.contains("价格明细") || i.text.equals("看台980元"));
+        addText("内场1680元", 320, 375, 520, 405, ORANGE);
+        addText("2张", 404, 745, 456, 770, BLACK); addText("¥3360 价格明细", 20, 880, 220, 920, ORANGE);
+        DamaiSkuAdapter.Result result = adapt();
+        assertNotNull(result.evidence);
+        assertEquals(Integer.valueOf(1680), result.evidence.selectedPrice);
+        assertEquals(Integer.valueOf(2), result.evidence.quantity);
+        assertEquals(Integer.valueOf(3360), result.evidence.totalYuan);
+        assertSame(confirm, result.evidence.confirmTarget);
+    }
     @Test public void quantityMustBeWithinNamedQuantityContainer() {
         nodes.removeIf(i -> i.resourceId.equals(ID + "layout_num")); assertNull(adapt().evidence.quantity);
     }

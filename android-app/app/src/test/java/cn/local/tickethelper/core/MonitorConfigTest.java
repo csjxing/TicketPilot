@@ -18,7 +18,15 @@ public class MonitorConfigTest {
     }
     @Test public void rejectsInvalidCalendarDate() { assertFalse(config("2026-02-30","19:30",1,1680,3000,6000).validate().isEmpty()); }
     @Test public void rejectsInvalidTime() { assertFalse(config("2026-10-23","25:30",1,1680,3000,6000).validate().isEmpty()); }
-    @Test public void rejectsMoreThanOneTicketInThisVersion() { assertFalse(config("2026-10-23","19:30",2,3360,3000,6000).validate().isEmpty()); }
+    @Test public void acceptsTwoTicketsWithSufficientTotalBudget() { assertTrue(config("2026-10-23","19:30",2,3360,3000,6000).validate().isEmpty()); }
+    @Test public void rejectsZeroNegativeAndMoreThanTwoTickets() {
+        for (int quantity : new int[]{-1,0,3,Integer.MAX_VALUE})
+            assertFalse(config("2026-10-23","19:30",quantity,100000,3000,6000).validate().isEmpty());
+    }
+    @Test public void twoTicketsRequireBudgetForTheHighestAcceptedTier() {
+        assertFalse(config("2026-10-23","19:30",2,2759,3000,6000).validate().isEmpty());
+        assertTrue(config("2026-10-23","19:30",2,2760,3000,6000).validate().isEmpty());
+    }
     @Test public void rejectsOverBudgetTiers() { assertFalse(config("2026-10-23","19:30",1,1000,3000,6000).validate().isEmpty()); }
     @Test public void rejectsSubMinimumReversedOrOverMaximumIntervals() {
         assertFalse(config("2026-10-23","19:30",1,1680,499,6000).validate().isEmpty());

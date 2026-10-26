@@ -32,6 +32,7 @@ import cn.local.tickethelper.catalog.CatalogSession;
 import cn.local.tickethelper.catalog.CatalogTier;
 import cn.local.tickethelper.catalog.CatalogKeyword;
 import cn.local.tickethelper.catalog.CatalogGuidance;
+import cn.local.tickethelper.catalog.CatalogPlanSelection;
 import cn.local.tickethelper.core.MonitorConfig;
 import java.text.Normalizer;
 import java.time.Instant;
@@ -528,19 +529,8 @@ public final class CatalogActivity extends Activity {
     }
 
     private String selectionProblem(CatalogStore.Snapshot snapshot) {
-        if (!"TIERS".equals(snapshot.stage) || snapshot.event == null) return "请先选好演出和场次，再选择接受的票价。";
-        if (safe(snapshot.event.city).isEmpty()) return "还缺少城市。请在大麦展开演出信息，再重新读取。";
-        if (snapshot.session == null || !safe(snapshot.session.date).matches("\\d{4}-\\d{2}-\\d{2}")
-                || !safe(snapshot.session.time).matches("\\d{2}:\\d{2}")) return "还缺少完整日期或时间。请在大麦展开场次，再重新读取。";
-        try {
-            if (!deadline(snapshot).isAfter(Instant.now())) return "该场次时间已过，不能作为监控截止时间，请选择未来场次。";
-        } catch (RuntimeException e) { return "场次日期或时间无效，请重新读取。"; }
         String query = searchInput == null ? queryDraft.trim() : searchInput.getText().toString().trim();
-        if (query.length() < 2 || query.length() > 60 || normalize(query).length() < 2
-                || matchedKeyword(snapshot) == null)
-            return "搜索内容中未找到可用于识别的演出名称。请包含标题中实际出现的名称（至少 2 个字符），不要只填城市、日期或“演唱会”。";
-        if (selectedPrices(snapshot).isEmpty()) return "请勾选至少一个接受的票价。";
-        return null;
+        return CatalogPlanSelection.problem(snapshot, selectedTierKeys, 1, query, System.currentTimeMillis());
     }
 
     private Instant deadline(CatalogStore.Snapshot snapshot) {
@@ -574,16 +564,14 @@ public final class CatalogActivity extends Activity {
         if (!reviewRequested || reviewRevision != snapshot.revision || !isCurrent(snapshot)) { render(snapshot); return; }
         String problem = selectionProblem(snapshot);
         if (problem != null) { reviewRequested = false; render(snapshot); showMessage("请重新核对", problem); return; }
-        List<Integer> prices = selectedPrices(snapshot);
-        int maximum = 0; for (int price : prices) maximum = Math.max(maximum, price);
-        MonitorConfig old = new AppStore(this).loadConfig();
-        MonitorConfig proposed = new MonitorConfig(matchedKeyword(snapshot), snapshot.event.city,
-                snapshot.session.date, snapshot.session.time, prices, 1, maximum, deadline(snapshot),
-                old.minIntervalMs, old.maxIntervalMs, old.mode);
-        if (!proposed.validate().isEmpty()) {
-            showMessage("还差一步", String.join("\n", proposed.validate())); return;
+        String query = searchInput == null ? queryDraft.trim() : searchInput.getText().toString().trim();
+        try {
+            CatalogPlanSaver.save(this, snapshot, selectedTierKeys, 1, query);
+            returnToHelper(true);
+        } catch (IllegalArgumentException invalid) {
+            reviewRequested = false; render(CatalogStore.get());
+            showMessage("请重新核对", invalid.getMessage());
         }
-        apply(snapshot, proposed);
     }
 
     private void apply(CatalogStore.Snapshot snapshot, MonitorConfig proposed) {

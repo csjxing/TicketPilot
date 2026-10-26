@@ -53,6 +53,7 @@ public final class CatalogController implements AutoCloseable {
     private String query = "";
     private CatalogProject event;
     private CatalogSession session;
+    private boolean inPlace;
 
     CatalogController(MonitorService service) {
         this.service = service; this.appStore = new AppStore(service); this.reader = new OcrReader(service);
@@ -89,6 +90,37 @@ public final class CatalogController implements AutoCloseable {
     }
     public static void selectProject(Context context, String key) { invoke(context, c -> c.project(key)); }
     public static void selectSession(Context context, String key) { invoke(context, c -> c.session(key)); }
+    /** One deliberate read of the user's current Damai selection; no launcher navigation or taps. */
+    void captureSelectedInPlace() {
+        inPlace = true;
+        query = ""; event = null; session = null;
+        if (!begin("in_place", "正在读取大麦中已选中的场次…")) return;
+        CatalogHandoff expected = handoff;
+        later(250, () -> awaitDamai(expected, () -> read(frame -> {
+            CatalogProject observed = CatalogParser.projectFromPage(frame.items, "");
+            if (observed == null) {
+                fail("请在大麦打开目标演出的场次票价页，再点使用当前场次。", "in_place_project_unverified"); return;
+            }
+            event = observed;
+            String title = observed.label;
+            query = title.length() <= 60 ? title : title.substring(0, 60);
+            List<CatalogParser.Entry<CatalogSession>> choices = CatalogParser.sessions(frame.items, event);
+            List<CatalogParser.Entry<CatalogSession>> selected;
+            if (frame.catalogSelection != null) selected = choices.stream().filter(entry ->
+                    entry.value.date.equals(frame.catalogSelection.date) && entry.value.time.equals(frame.catalogSelection.time))
+                    .collect(java.util.stream.Collectors.toList());
+            else if (!ReservationSessionParser.isReservationPage(frame.items)) selected = choices.stream()
+                    .filter(entry -> entry.target.selected).collect(java.util.stream.Collectors.toList());
+            else selected = List.of();
+            if (selected.size() != 1) {
+                fail("先在大麦点选一个日期和时间，确认只有一场选中，再点使用当前场次。", "in_place_selection_unverified"); return;
+            }
+            session = selected.get(0).value;
+            readSelectedTiers(frame);
+        })));
+    }
+
+    boolean openTargetForPanel() { inPlace = true; return openDamai(); }
     public static void cancel(Context context) {
         Runnable work = () -> {
             MonitorService monitor = MonitorService.instance;
@@ -118,6 +150,7 @@ public final class CatalogController implements AutoCloseable {
         return true;
     }
     private void search(String text) {
+        inPlace = false;
         String value = text == null ? "" : text.trim();
         if (value.length() < 2 || value.length() > 60 || value.contains("\n") || value.contains("\r")) {
             fail("请输入 2 至 60 个字符的演出名或艺人名。", "invalid_query"); return;
@@ -133,6 +166,7 @@ public final class CatalogController implements AutoCloseable {
         capture(CatalogStore.get().query);
     }
     private void capture(String value) {
+        inPlace = false;
         query = value; event = null; session = null;
         if (!begin("capture", "正在切回大麦，准备读取当前页面…")) return;
         openAndAwaitDamai(() -> read(frame -> {
@@ -287,6 +321,7 @@ public final class CatalogController implements AutoCloseable {
                 entries.stream().map(entry -> entry.value).collect(java.util.stream.Collectors.toList()), List.of(), List.of());
     }
     private void project(String key) {
+        inPlace = false;
         CatalogStore.Snapshot previous = CatalogStore.get();
         if (!recent(previous) || !previous.stage.equals("PROJECTS")) { fail("选择结果已过期，请重新搜索。", "stale_project_choice"); return; }
         CatalogProject selected = previous.projects.stream().filter(value -> value.key.equals(key)).findFirst().orElse(null);
@@ -408,6 +443,7 @@ public final class CatalogController implements AutoCloseable {
                 List.of(), entries.stream().map(entry -> entry.value).collect(java.util.stream.Collectors.toList()), List.of());
     }
     private void session(String key) {
+        inPlace = false;
         CatalogStore.Snapshot previous = CatalogStore.get();
         if (!recent(previous) || !previous.stage.equals("SESSIONS")) { fail("场次列表已过期，请重新读取。", "stale_session_choice"); return; }
         CatalogSession selected = previous.sessions.stream().filter(value -> value.key.equals(key)).findFirst().orElse(null);
@@ -669,14 +705,20 @@ public final class CatalogController implements AutoCloseable {
         if (timeout != null) { handler.removeCallbacks(timeout); timeout = null; }
         CatalogStore.update(stage, status, query, event, session, projects, sessions, tiers, System.currentTimeMillis());
         appStore.appendEvent("CATALOG", "public_" + stage.toLowerCase(java.util.Locale.ROOT), 0);
-        show(service);
+        deliverResult();
     }
     private void fail(String reason, String code) {
         if (active) appStore.appendEvent("CATALOG", "operation_failed:" + operationKind + ":round=" + operationRound + ":reason=" + code, 0);
         cancelInternal(false);
         CatalogStore.update("BLOCKED", reason, query, event, session, List.of(), List.of(), List.of(), 0);
         appStore.appendEvent("CATALOG", code, 0);
-        show(service);
+        deliverResult();
+    }
+    private void deliverResult() {
+        if (inPlace) {
+            dismissResultNotification(service);
+            service.deliverInPlaceCatalog(CatalogStore.get());
+        } else show(service);
     }
     void cancelInternal(boolean announce) {
         boolean wasActive = active;
@@ -688,7 +730,7 @@ public final class CatalogController implements AutoCloseable {
                 List.of(), List.of(), List.of(), 0);
         if (announce && wasActive) {
             CatalogStore.update("BLOCKED", "页面选择已取消，请重新读取。", query, event, session, List.of(), List.of(), List.of(), 0);
-            show(service);
+            deliverResult();
         }
     }
     @Override public void close() { cancelInternal(false); reader.close(); }

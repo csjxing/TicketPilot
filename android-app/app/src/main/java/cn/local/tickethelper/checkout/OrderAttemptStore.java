@@ -243,9 +243,10 @@ public final class OrderAttemptStore {
             if (!attempt.attemptId.matches("[a-zA-Z0-9_.:-]{1,128}") || !attempt.grantId.matches("[a-zA-Z0-9_.:-]{1,128}")
                     || !hash(attempt.configFingerprint) || !hash(attempt.targetFingerprint) || target == null
                     || target.eventTitle.isEmpty() || target.eventTitle.length() > 300 || target.city.isEmpty() || target.city.length() > 40
-                    || !hash(target.viewerBindingHash) || target.quantity != 1 || target.unitPriceFen <= 0
+                    || !hash(target.viewerBindingHash) || target.quantity < 1 || target.quantity > 2 || target.unitPriceFen <= 0
                     || target.unitPriceFen > 10_000_000
-                    || target.ticketSubtotalFen != target.unitPriceFen || target.payableFen != target.ticketSubtotalFen
+                    || target.ticketSubtotalFen != target.unitPriceFen * target.quantity || target.ticketSubtotalFen > 10_000_000
+                    || target.payableFen != target.ticketSubtotalFen
                     || !target.fingerprint().equals(attempt.targetFingerprint)
                     || attempt.reservedAtMs <= 0 || attempt.updatedAtMs < attempt.reservedAtMs || attempt.state == null)
                 throw new IOException("invalid_attempt_fields");

@@ -28,6 +28,7 @@ import cn.local.tickethelper.core.Observation;
 import cn.local.tickethelper.core.UiItem;
 import cn.local.tickethelper.ai.AiContextRepository;
 import cn.local.tickethelper.ai.AiPageSummary;
+import cn.local.tickethelper.catalog.CatalogHandoff;
 import cn.local.tickethelper.checkout.CheckoutDecision;
 import cn.local.tickethelper.checkout.CheckoutObservation;
 import cn.local.tickethelper.checkout.LockAuthorization;
@@ -57,8 +58,7 @@ public final class MonitorService extends AccessibilityService {
     private OrderAttemptStore orderAttempts;
     private OrderAttempt liveOrderAttempt;
     private long orderConfigRevision;
-    private boolean viewerSelectionDispatched;
-    private long viewerSelectionAt;
+    private final java.util.Map<String, Long> viewerSelectionTargets = new java.util.HashMap<>();
     private AppStore store;
     private OcrReader ocr;
     private OcrReader aiPageReader;
@@ -67,6 +67,10 @@ public final class MonitorService extends AccessibilityService {
     private MonitorConfig config;
     private ShizukuInputBridge inputBridge;
     private CatalogController catalog;
+    private CatalogOverlay catalogOverlay;
+    private long panelGeneration;
+    private long selectionStartGeneration;
+    private Runnable panelWatch;
     private String inputMode = AppStore.INPUT_ACCESSIBILITY;
     private boolean running, busy, targetSeen, screenReceiverRegistered;
     private long generation, windowGeneration, startedAt, lastNavigationAt, nextActionAt, lastCaptureAt, scheduledAt;
@@ -182,6 +186,117 @@ public final class MonitorService extends AccessibilityService {
     long catalogLastWindowChangeElapsed() { return lastWindowChangeElapsed; }
     String catalogLastWindowEventSummary() { return lastWindowEventSummary; }
 
+    /** User-selected in-place workflow. Opening the panel never starts monitoring. */
+    public void openInPlaceCatalog() {
+        closeInPlaceCatalog();
+        pause("正在大麦中选择场次，监控保持暂停。");
+        if (catalog == null || !unlocked()) return;
+        catalog.cancelInternal(false);
+        CatalogController.dismissResultNotification(this);
+        catalogOverlay = new CatalogOverlay(this, store.loadConfig().quantity, new CatalogOverlay.Actions() {
+            @Override public void captureSelected() {
+                if (catalogOverlay != null && catalogOverlay.isOpen() && catalog != null)
+                    catalog.captureSelectedInPlace();
+            }
+            @Override public void save(CatalogStore.Snapshot snapshot, java.util.Set<String> keys, int quantity) {
+                withPanelOnDamai(() -> {
+                    try {
+                        MonitorConfig saved = CatalogPlanSaver.save(MonitorService.this, snapshot, keys, quantity);
+                        catalogOverlay.showSaved(saved.city + " · " + saved.date + " " + saved.time + "\n"
+                                + saved.prices + " 元 · " + saved.quantity + " 张 · 票款上限 ¥" + saved.maxTotal
+                                + "\n计划已保存。当前选票测试会在确认购买页暂停。");
+                        store.appendEvent("CATALOG_PANEL", "plan_saved", 0);
+                    } catch (IllegalArgumentException invalid) {
+                        catalogOverlay.showFailure(invalid.getMessage());
+                    }
+                });
+            }
+            @Override public void startSelectionTest() { withPanelOnDamai(MonitorService.this::startInPlaceSelectionTest); }
+            @Override public void closed() {
+                if (catalog != null) catalog.cancelInternal(false);
+                if (panelWatch != null) handler.removeCallbacks(panelWatch);
+            }
+        });
+        long token = ++panelGeneration;
+        if (!catalog.openTargetForPanel()) { closeInPlaceCatalog(); return; }
+        awaitPanelForeground(token, SystemClock.elapsedRealtime() + 20_000);
+    }
+
+    private void awaitPanelForeground(long token, long deadline) {
+        if (token != panelGeneration || catalogOverlay == null) return;
+        if (!unlocked() || running || SystemClock.elapsedRealtime() >= deadline) {
+            closeInPlaceCatalog(); return;
+        }
+        if (!TARGET.equals(foreground())) {
+            handler.postDelayed(() -> awaitPanelForeground(token, deadline), 200); return;
+        }
+        catalogOverlay.showReady();
+        store.appendEvent("CATALOG_PANEL", "opened", 0);
+        panelWatch = new Runnable() {
+            @Override public void run() {
+                if (token != panelGeneration || catalogOverlay == null || !catalogOverlay.isOpen()) return;
+                if (!unlocked() || running || !TARGET.equals(foreground())) { closeInPlaceCatalog(); return; }
+                handler.postDelayed(this, 500);
+            }
+        };
+        handler.postDelayed(panelWatch, 500);
+    }
+
+    private void withPanelOnDamai(Runnable action) {
+        CatalogOverlay expected = catalogOverlay;
+        if (expected == null || !expected.isOpen()) return;
+        expected.hideForRead();
+        CatalogHandoff handoff = new CatalogHandoff(SystemClock.elapsedRealtime(), 10_000, 500);
+        awaitPanelAction(expected, panelGeneration, handoff, action);
+    }
+
+    private void awaitPanelAction(CatalogOverlay expected, long token, CatalogHandoff handoff, Runnable action) {
+        if (token != panelGeneration || catalogOverlay != expected || !expected.isOpen()) return;
+        long now = SystemClock.elapsedRealtime();
+        boolean settled = TARGET.equals(foreground()) && now - lastWindowChangeElapsed >= 300;
+        switch (handoff.observe(now, settled, unlocked(), running || store.isArmed())) {
+            case WAITING: handler.postDelayed(() -> awaitPanelAction(expected, token, handoff, action), 200); break;
+            case READY: action.run(); break;
+            case TIMED_OUT: expected.showFailure("请在大麦保持原场次页面，再重新读取核对。"); break;
+            default: closeInPlaceCatalog(); break;
+        }
+    }
+
+    void deliverInPlaceCatalog(CatalogStore.Snapshot snapshot) {
+        if (catalogOverlay == null || !catalogOverlay.isOpen()) return;
+        if (!unlocked() || !TARGET.equals(foreground())) { closeInPlaceCatalog(); return; }
+        if ("TIERS".equals(snapshot.stage)) catalogOverlay.showResult(snapshot);
+        else catalogOverlay.showFailure(snapshot.status);
+        store.appendEvent("CATALOG_PANEL", "result_shown", 0);
+    }
+
+    private void startInPlaceSelectionTest() {
+        if (catalogOverlay == null || !catalogOverlay.isOpen() || !unlocked() || !TARGET.equals(foreground())) return;
+        MonitorConfig saved = store.loadConfig();
+        MonitorConfig test = new MonitorConfig(saved.eventKeyword, saved.city, saved.date, saved.time, saved.prices,
+                saved.quantity, saved.maxTotal, saved.deadline, saved.minIntervalMs, saved.maxIntervalMs, MonitorConfig.Mode.PREPARE);
+        if (!test.validate().isEmpty() || store.isImportedTargetPendingReview()) {
+            catalogOverlay.showFailure("请先读取并核对保存当前场次。"); return;
+        }
+        closeInPlaceCatalog();
+        store.saveConfig(test);
+        // Overlay removal emits a real window event. Start from a new observation after it settles.
+        long token = ++selectionStartGeneration;
+        long revision = store.getConfigRevision();
+        handler.postDelayed(() -> {
+            if (token == selectionStartGeneration && revision == store.getConfigRevision()
+                    && store.loadConfig().mode == MonitorConfig.Mode.PREPARE
+                    && unlocked() && TARGET.equals(foreground()) && !running && !store.isArmed()) arm();
+        }, 700);
+    }
+
+    private void closeInPlaceCatalog() {
+        panelGeneration++;
+        if (panelWatch != null) { handler.removeCallbacks(panelWatch); panelWatch = null; }
+        CatalogOverlay previous = catalogOverlay; catalogOverlay = null;
+        if (previous != null) previous.close();
+    }
+
     public void arm() {
         cancelAiPageRead();
         armInternal(null);
@@ -194,6 +309,7 @@ public final class MonitorService extends AccessibilityService {
 
     private void armInternal(LockAuthorization authorization) {
         if (running) return;
+        closeInPlaceCatalog();
         if (catalog != null) catalog.cancelInternal(false);
         config = store.loadConfig();
         orderAuthorization = null; liveOrderAttempt = null; orderAttempts = null;
@@ -208,8 +324,8 @@ public final class MonitorService extends AccessibilityService {
                 pause("当前大麦版本的订单页面尚未适配，请使用到确认页暂停模式。"); return;
             }
             if (authorization == null || !authorization.validFor(config, System.currentTimeMillis())
-                    || !authorization.viewerBindingHash.equals(LockAuthorization.viewerBindingHash(
-                            store.getViewerDisplayName(), store.getViewerDocumentSuffix()))) {
+                    || store.getViewerBindings().size() != config.quantity
+                    || !authorization.viewerBindingHash.equals(LockAuthorization.viewerBindingsHash(store.getViewerBindings()))) {
                 pause("请在助手中重新核对本次演出、预算及观演人，再主动开始自动下单。"); return;
             }
             try {
@@ -222,7 +338,7 @@ public final class MonitorService extends AccessibilityService {
             }
             orderAuthorization = authorization;
             orderConfigRevision = store.getConfigRevision();
-            viewerSelectionDispatched = false; viewerSelectionAt = 0;
+            viewerSelectionTargets.clear();
         }
         inputMode = store.getInputMode();
         if (AppStore.INPUT_SHIZUKU.equals(inputMode) && !inputBridge.isReady()) {
@@ -253,6 +369,7 @@ public final class MonitorService extends AccessibilityService {
     public void pause(String reason) { stop(reason, "PAUSED", "user_paused", false); }
 
     private void stop(String message, String state, String reason, boolean alert) {
+        selectionStartGeneration++;
         boolean wasRunning = running;
         cancelAiPageRead();
         running = false; busy = false; generation++; engine.reset(); handler.removeCallbacks(tick);
@@ -477,8 +594,8 @@ public final class MonitorService extends AccessibilityService {
     private boolean orderGrantCurrent() {
         return orderAuthorization != null && orderConfigRevision == store.getConfigRevision()
                 && orderAuthorization.validFor(store.loadConfig(), System.currentTimeMillis())
-                && orderAuthorization.viewerBindingHash.equals(LockAuthorization.viewerBindingHash(
-                        store.getViewerDisplayName(), store.getViewerDocumentSuffix()));
+                && store.getViewerBindings().size() == config.quantity
+                && orderAuthorization.viewerBindingHash.equals(LockAuthorization.viewerBindingsHash(store.getViewerBindings()));
     }
 
     private CheckoutObservation readOrderPage() {
@@ -488,7 +605,7 @@ public final class MonitorService extends AccessibilityService {
     private CheckoutParseResult readOrderPageResult() {
         return OrderCheckoutAdapter.read(this, () -> windowGeneration,
                 liveOrderAttempt == null ? "" : liveOrderAttempt.attemptId,
-                store.getViewerDisplayName(), store.getViewerDocumentSuffix());
+                store.getViewerBindings());
     }
 
     private void handleOrderCheckout(long token, long pageToken) {
@@ -502,12 +619,16 @@ public final class MonitorService extends AccessibilityService {
             OrderAttempt attempt = orderAttempts.read();
             if (attempt == null && read.viewerResult != null
                     && read.viewerResult.state == ViewerMatcher.State.SELECT_PROPOSAL) {
-                if (viewerSelectionDispatched) {
-                    if (SystemClock.elapsedRealtime() - viewerSelectionAt < 6000) {
+                if (viewerSelectionTargets.containsKey(viewerTargetKey(read))) {
+                    if (SystemClock.elapsedRealtime() - viewerSelectionTargets.get(viewerTargetKey(read)) < 6000) {
                         busy = false; schedule(700); return;
                     }
                     stop("观演人点击后的选中状态无法确认，已暂停；尚未提交订单。",
                             "CHECKOUT", "viewer_selection_not_verified", true); return;
+                }
+                if (viewerSelectionTargets.size() >= config.quantity) {
+                    stop("观演人选中状态仍无法核实，已暂停；尚未提交订单。",
+                            "CHECKOUT", "viewer_selection_limit", true); return;
                 }
                 if (orderEngine.canSelectViewer(config, orderAuthorization, read.observation, read.viewerResult, attempt,
                         System.currentTimeMillis())) {
@@ -552,11 +673,11 @@ public final class MonitorService extends AccessibilityService {
 
     /** Select one uniquely matched, currently unchecked attendee; always reread before submitting. */
     private void selectViewerOnce(CheckoutParseResult read, long token, long pageToken) {
-        if (viewerSelectionDispatched || !viewerReadFresh(read, token, pageToken)) {
+        if (viewerSelectionTargets.size() >= config.quantity || viewerSelectionTargets.containsKey(viewerTargetKey(read))
+                || !viewerReadFresh(read, token, pageToken)) {
             stop("观演人页面已变化，已暂停，尚未提交订单。", "CHECKOUT", "viewer_page_changed", true); return;
         }
-        viewerSelectionDispatched = true;
-        viewerSelectionAt = SystemClock.elapsedRealtime();
+        viewerSelectionTargets.put(viewerTargetKey(read), SystemClock.elapsedRealtime());
         UiItem target = read.viewerResult.selectionTarget;
         store.appendEvent("VIEWER_SELECTION_REQUEST", "single_native_checkbox", 0);
         if (AppStore.INPUT_SHIZUKU.equals(inputMode)) {
@@ -585,6 +706,7 @@ public final class MonitorService extends AccessibilityService {
 
     private boolean viewerReadFresh(CheckoutParseResult read, long token, long pageToken) {
         if (read == null || read.viewerResult == null || read.viewerResult.selectionTarget == null
+                || !read.viewerResult.selectionIdentityHash.matches("[0-9a-f]{64}")
                 || !valid(token, pageToken) || !orderGrantCurrent()) return false;
         long age = System.currentTimeMillis() - read.observation.observedAtMs;
         return age >= 0 && age < 3000;
@@ -601,13 +723,14 @@ public final class MonitorService extends AccessibilityService {
                     || !orderEngine.canSelectViewer(config, orderAuthorization, current.observation, current.viewerResult,
                             attempt, System.currentTimeMillis())
                     || !current.viewerResult.bindingHash.equals(initial.viewerResult.bindingHash)
+                    || !current.viewerResult.selectionIdentityHash.equals(initial.viewerResult.selectionIdentityHash)
                     || !sameNativeControl(initial.viewerResult.selectionTarget, current.viewerResult.selectionTarget)
                     || !viewerReadFresh(initial, token, pageToken)) return null;
             long deadline = SystemClock.elapsedRealtime() + 80;
             AccessibilityNodeInfo node = CheckoutNativeTarget.find(this, current.viewerResult.selectionTarget,
                     current.observation.windowId, deadline,
                     candidate -> OrderCheckoutAdapter.viewerControlMatches(this, candidate,
-                            store.getViewerDisplayName(), store.getViewerDocumentSuffix(), deadline));
+                            proposedViewer(current.viewerResult.selectionIdentityHash), deadline));
             return node != null && viewerReadFresh(initial, token, pageToken) ? node : null;
         } catch (IOException | RuntimeException unavailable) { return null; }
     }
@@ -616,6 +739,18 @@ public final class MonitorService extends AccessibilityService {
         return a != null && b != null && a.source == UiItem.Source.NODE && b.source == UiItem.Source.NODE
                 && a.resourceId.equals(b.resourceId) && a.text.equals(b.text)
                 && a.left == b.left && a.top == b.top && a.right == b.right && a.bottom == b.bottom;
+    }
+
+    private static String viewerTargetKey(CheckoutParseResult read) {
+        return read == null || read.viewerResult == null ? "" : read.viewerResult.selectionIdentityHash;
+    }
+
+    private java.util.List<ViewerMatcher.RequestedViewer> proposedViewer(String identityHash) {
+        if (identityHash == null || !identityHash.matches("[0-9a-f]{64}")) return java.util.List.of();
+        java.util.List<ViewerMatcher.RequestedViewer> matches = store.getViewerBindings().stream().filter(viewer ->
+                identityHash.equals(LockAuthorization.viewerBindingHash(viewer.displayName, viewer.documentSuffix)))
+                .collect(java.util.stream.Collectors.toList());
+        return matches.size() == 1 ? matches : java.util.List.of();
     }
 
     /** Exactly one submit input, isolated from SKU retries and gesture fallbacks. */
@@ -984,12 +1119,16 @@ public final class MonitorService extends AccessibilityService {
     }
 
     @Override public void onInterrupt() {
+        selectionStartGeneration++;
+        closeInPlaceCatalog();
         // Further system interruption callbacks must not repeatedly alert an already paused task.
         if (running) stop("无障碍服务已中断，请重新检查权限。", "BLOCKED", "service_interrupted", true);
         if (catalog != null) catalog.cancelInternal(true);
     }
 
     private void releaseConnectionResources() {
+        selectionStartGeneration++;
+        closeInPlaceCatalog();
         if (catalog != null) { catalog.close(); catalog = null; }
         if (screenReceiverRegistered) {
             try { unregisterReceiver(stopReceiver); } catch (IllegalArgumentException ignored) { }

@@ -220,7 +220,7 @@ public final class AdvancedSettingsActivity extends Activity {
         manual.addView(advancedTargetFields, spaced(2));
         field(advancedTargetFields, "event", "演出关键词", "填写页面上可见的准确名称", false);
         paired(advancedTargetFields, "city", "城市", "例如：杭州", false, "date", "演出日期", "2026-12-31", false);
-        paired(advancedTargetFields, "time", "开演时间", "19:30", false, "quantity", "张数", "当前版本仅支持 1 张", true);
+        paired(advancedTargetFields, "time", "开演时间", "19:30", false, "quantity", "张数", "1–2 张，在大麦悬浮面板选择", true);
         field(advancedTargetFields, "prices", "接受票价（元）", "例如：980,1380,1680", false);
         field(advancedTargetFields, "maxTotal", "订单实付上限（元，含全部费用）", "填写最高可接受的订单总额", true);
         field(advancedTargetFields, "deadline", "什么时候停止（北京时间）", "点击选择日期与时间", false);
@@ -579,7 +579,8 @@ public final class AdvancedSettingsActivity extends Activity {
     private boolean persistDraft(MonitorConfig config) {
         try {
             pauseForInputSettings("正在保存配置，监控保持暂停；本次下单授权已撤销。");
-            store.saveViewerBinding(viewerName.getText().toString(), viewerSuffix.getText().toString());
+            if (config.quantity == 1)
+                store.saveViewerBinding(viewerName.getText().toString(), viewerSuffix.getText().toString());
             store.saveConfig(config);
             displayedConfigRevision = store.getConfigRevision(); unsavedChanges = false;
             store.setStatus("修改已保存，尚未开始监控。");
@@ -614,13 +615,19 @@ public final class AdvancedSettingsActivity extends Activity {
         }
         if (!orderBarrierClear()) { showMessage("请先核查大麦订单", orderBarrierText.getText().toString()); return; }
         String title = CatalogActivity.selectedTitle(this, config);
-        String viewer = store.getViewerDisplayName(), suffix = store.getViewerDocumentSuffix();
-        String binding = LockAuthorization.viewerBindingHash(viewer, suffix);
+        java.util.List<cn.local.tickethelper.checkout.ViewerMatcher.RequestedViewer> viewers = store.getViewerBindings();
+        String binding = viewers.size() == config.quantity ? LockAuthorization.viewerBindingsHash(viewers) : "";
+        StringBuilder viewerSummary = new StringBuilder();
+        for (cn.local.tickethelper.checkout.ViewerMatcher.RequestedViewer viewer : viewers) {
+            if (viewerSummary.length() > 0) viewerSummary.append("、");
+            viewerSummary.append(viewer.displayName);
+            if (!viewer.documentSuffix.isEmpty()) viewerSummary.append("（尾号 ").append(viewer.documentSuffix).append("）");
+        }
         if (title.isEmpty()) {
             showMessage("需要核实完整项目", "请先通过“选择 / 更换演出”保存真实项目，再使用自动下单。手填关键词不能替代完整项目核对。"); return;
         }
         if (binding.isEmpty()) {
-            showMessage("请填写本次观演人", "请按大麦实名名单填写本机观演人姓名。不会沿用历史任务中的实名信息。"); return;
+            showMessage("请填写本次观演人", "请到“我的 → 观演人”，按当前票数填写大麦中已登记的完整姓名，再回来核对。"); return;
         }
         long revision = store.getConfigRevision(), draftRevision = uiRevision;
         String deadline = config.deadline.atZone(ZoneId.of("Asia/Shanghai"))
@@ -628,7 +635,7 @@ public final class AdvancedSettingsActivity extends Activity {
         String message = title + "\n" + config.city + " · " + config.date + " " + config.time
                 + "\n接受票面价：" + config.prices + " 元"
                 + "\n数量：" + config.quantity + " 张 · 订单实付上限：" + config.maxTotal + " 元"
-                + "\n观演人：" + viewer + (suffix.isEmpty() ? "" : " · 证件尾号 " + suffix)
+                + "\n观演人：" + viewerSummary
                 + "\n本次监控截止：" + deadline + "（北京时间）"
                 + "\n\n确认后核实目标和观演人，尝试提交一次订单，看到官方待付款订单后停止；付款由你完成。"
                 + "\n不会添加付费项目。提交结果未知时不会重试。暂停或配置改变后本次授权失效。"
@@ -639,7 +646,8 @@ public final class AdvancedSettingsActivity extends Activity {
                     if (!OrderCheckoutAdapter.isLiveVerified() || !activityResumed || isFinishing() || isDestroyed()
                             || uiRevision != draftRevision || store.getConfigRevision() != revision
                             || !LockAuthorization.configFingerprint(config).equals(LockAuthorization.configFingerprint(store.loadConfig()))
-                            || !binding.equals(LockAuthorization.viewerBindingHash(store.getViewerDisplayName(), store.getViewerDocumentSuffix()))
+                            || store.getViewerBindings().size() != config.quantity
+                            || !binding.equals(LockAuthorization.viewerBindingsHash(store.getViewerBindings()))
                             || !title.equals(CatalogActivity.selectedTitle(this, store.loadConfig()))) {
                         showMessage("本次配置已变化", "请重新核对目标与观演人后开始。"); return;
                     }

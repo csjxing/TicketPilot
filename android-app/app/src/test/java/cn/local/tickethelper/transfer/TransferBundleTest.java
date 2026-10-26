@@ -56,6 +56,20 @@ public final class TransferBundleTest {
         assertEquals(500, restored.config.minIntervalMs); assertEquals(1501, restored.config.maxIntervalMs);
         assertEquals(MonitorConfig.Mode.PREPARE, restored.config.mode);
     }
+    @Test public void twoTicketBudgetSurvivesPublicBackupRoundTripWithoutViewerOrOrderAuthority() throws Exception {
+        MonitorConfig original = config(MonitorConfig.Mode.PREPARE);
+        MonitorConfig two = new MonitorConfig(original.eventKeyword, original.city, original.date, original.time,
+                List.of(1680), 2, 3360, original.deadline, 500, 1500, original.mode);
+        byte[] bytes = bundle(two);
+        TransferBundle.Preview restored = read(bytes);
+        assertEquals(2, restored.config.quantity); assertEquals(3360, restored.config.maxTotal);
+        assertEquals(List.of(1680), restored.config.prices); assertEquals(MonitorConfig.Mode.PREPARE, restored.config.mode);
+        String raw = new String(unzip(bytes).get("configuration.properties"), StandardCharsets.UTF_8);
+        assertFalse(raw.contains("viewer")); assertFalse(raw.contains("armed")); assertFalse(raw.contains("authorization"));
+        Map<String, byte[]> invalid = unzip(bytes);
+        replace(invalid, "configuration.properties", "quantity=2", "quantity=3"); rehash(invalid, "configuration.properties");
+        rejected(zip(invalid));
+    }
     @Test public void lockModeIsAlwaysDowngradedBeforeImportPreview() throws Exception {
         TransferBundle.Preview p = read(bundle(config(MonitorConfig.Mode.LOCK_ORDER)));
         assertTrue(p.modeDowngraded); assertEquals(MonitorConfig.Mode.PREPARE, p.config.mode);

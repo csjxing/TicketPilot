@@ -1,4 +1,4 @@
-tickethelper-knowledge-v1	2026-10-26	0.2.1
+tickethelper-knowledge-v1	2026-10-26	0.2.2
 quick-start	准备使用	在这台手机上开始使用	从计划开始，领航员显示当前步骤与下一步；日常操作在手机完成，物理拔线运行仍待验收。	入门 开始 启动 教程 如何使用 第一次 本机 vivo 计划 领航员 下一步	quick-start.md
 permissions	准备使用	权限、连接和手机重启	区分服务启动、授权、连接和开始监控；重启后可按官方无线调试流程启动 Shizuku。	无障碍 TalkBack Shizuku 连接 未就绪 通知 权限 vivo 无线调试 重启 AI API Key 密钥 接口	permissions.md
 select-event	准备使用	搜索演出，选择场次和票价	从手机中的真实大麦读取后选择，减少手填；保存目标不会开始监控。	搜索 名称 场次 日期 票价 预算 手动填写 大麦 AI 模型 配置 建议 比较	select-event.md

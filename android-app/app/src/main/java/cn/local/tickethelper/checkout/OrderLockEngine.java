@@ -19,6 +19,7 @@ public final class OrderLockEngine {
                 || !fresh(observation,nowMs) || observation.kind != CheckoutObservation.Kind.CONFIRMATION
                 || observation.viewerSelectionVerified || !matchesAuthorization(authorization,observation,false)
                 || viewer == null || viewer.state != ViewerMatcher.State.SELECT_PROPOSAL
+                || viewer.viewerCount != config.quantity || !viewer.selectionIdentityHash.matches("[0-9a-f]{64}")
                 || !authorization.viewerBindingHash.equals(viewer.bindingHash)
                 || !observation.selectedViewerBindingHash.equals(viewer.bindingHash)) return false;
         UiItem target=viewer.selectionTarget;
@@ -159,8 +160,9 @@ public final class OrderLockEngine {
     private static boolean completeFacts(CheckoutObservation observation,boolean requireSelected) {
         if (!validPublicTarget(observation.eventTitle,observation.city,observation.date,observation.time)
                 || observation.unitPriceFen == null || observation.quantity == null || observation.ticketSubtotalFen == null
-                || observation.payableFen == null || observation.unitPriceFen <= 0 || observation.quantity != 1
+                || observation.payableFen == null || observation.unitPriceFen <= 0 || observation.quantity < 1 || observation.quantity > 2
                 || observation.unitPriceFen > 10_000_000 || (requireSelected && !observation.viewerSelectionVerified)
+                || observation.ticketSubtotalFen > 10_000_000
                 || !observation.selectedViewerBindingHash.matches("[0-9a-f]{64}") || !observation.noUnapprovedExtras) return false;
         // The first lock mode accepts no additional fee or silently applied price change.
         return observation.ticketSubtotalFen == observation.unitPriceFen*observation.quantity
@@ -177,8 +179,9 @@ public final class OrderLockEngine {
                 || attempt.state == null || attempt.target == null || attempt.reservedAtMs <= 0 || attempt.updatedAtMs < attempt.reservedAtMs)
             return false;
         OrderTarget target=attempt.target;
-        if (!validPublicTarget(target.eventTitle,target.city,target.date,target.time) || target.quantity != 1
-                || target.unitPriceFen <= 0 || target.unitPriceFen > 10_000_000 || target.ticketSubtotalFen != target.unitPriceFen
+        if (!validPublicTarget(target.eventTitle,target.city,target.date,target.time) || target.quantity < 1 || target.quantity > 2
+                || target.unitPriceFen <= 0 || target.unitPriceFen > 10_000_000
+                || target.ticketSubtotalFen != target.unitPriceFen * target.quantity || target.ticketSubtotalFen > 10_000_000
                 || target.payableFen != target.ticketSubtotalFen || !target.viewerBindingHash.matches("[0-9a-f]{64}")
                 || !attempt.targetFingerprint.equals(target.fingerprint())) return false;
         if (attempt.state == OrderAttempt.State.RESERVED && attempt.submissionAuthorized) return false;

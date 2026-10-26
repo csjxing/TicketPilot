@@ -65,6 +65,12 @@ public final class DecisionEngine {
         if (contains(all, "确认购买", "确认订单")) {
             reset(); return result(Decision.State.UNKNOWN, "checkout_content_unverified");
         }
+        // Reservation preference pages are catalog-only. Even a complete-looking
+        // price/count/amount combination cannot turn their controls into purchase input.
+        if (o.items.stream().anyMatch(i -> i.source == UiItem.Source.NODE
+                && i.resourceId.equals("cn.damai:id/tv_perform_name") && i.text.trim().equals("预约想看场次"))) {
+            reset(); return result(Decision.State.UNKNOWN, "reservation_selection_only");
+        }
         Observation.VerifiedSelection verified = o.verifiedSelection;
         if (verified != null && (verified.observedAtMs != o.timestampMs
                 || !c.date.equals(verified.date) || !c.time.equals(verified.time)))

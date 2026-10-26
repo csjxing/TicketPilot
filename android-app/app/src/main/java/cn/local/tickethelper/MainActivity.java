@@ -163,16 +163,9 @@ public final class MainActivity extends Activity {
         brand.addView(tag("手机本地运行", MUTED, BG)); body.addView(brand);
         boolean hasTarget = !c.eventKeyword.isEmpty();
         if (!hasTarget) {
-            add(body, "下一站，现场。", 34, INK, true, 28);
-            add(body, "选一场想看的，领航员带你完成准备。", 14, MUTED, false, 10);
-            LinearLayout searchRow = row(); searchRow.setBackground(shape(Color.WHITE, LINE, 16));
-            search = new EditText(this); search.setSingleLine(); search.setTextSize(17); search.setTextColor(INK);
-            search.setHint("艺人、演出或城市"); search.setHintTextColor(MUTED); search.setText(query);
-            search.setBackgroundColor(Color.TRANSPARENT); search.setPadding(dp(16),dp(16),dp(8),dp(16));
-            search.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
-            search.setImeOptions(EditorInfo.IME_ACTION_SEARCH); search.setContentDescription("搜索演出或城市");
-            search.setOnEditorActionListener((v,a,e) -> { if (a != EditorInfo.IME_ACTION_SEARCH) return false; openCatalog(); return true; });
-            searchRow.addView(search,weighted()); searchRow.addView(button("搜索", false, v -> openCatalog())); body.addView(searchRow, space(22));
+            add(body, "先在大麦选一场", 34, INK, true, 28);
+            add(body, "在大麦搜索演出、点选日期，再用悬浮助手读取当前场次。", 14, MUTED, false, 10);
+            body.addView(button("打开大麦，显示悬浮助手", true, v -> openCatalog()), space(22));
             body.addView(textAction("还没想好？让领航员帮我整理需求  ↗", () -> openAi("配置建议", "购票需求", query.isBlank() ? "我想看演出，请帮我明确艺人、城市、日期和预算，先问我最重要的一项。" : query)), space(12));
         } else renderTicket(c);
 
@@ -207,7 +200,7 @@ public final class MainActivity extends Activity {
         LinearLayout bottom=row(); LinearLayout money=column();
         add(money,priceText(c),22,INK,true,0); add(money,"接受票价",11,MUTED,false,4);
         bottom.addView(money,weighted());bottom.addView(tag(c.quantity+" 张",BLUE,TINT));ticket.addView(bottom,space(18));
-        ticket.addView(textAction("修改演出 / 场次 / 票价  ›", this::openCatalog),space(14));body.addView(ticket,space(10));
+        ticket.addView(textAction("去大麦选择场次和票价  ↗", this::openCatalog),space(14));body.addView(ticket,space(10));
     }
 
     private void renderPreferences() {
@@ -319,11 +312,12 @@ public final class MainActivity extends Activity {
         menuRow("AI 模型","接口、密钥与用量",() -> {pause("正在设置模型，监控暂停。");startActivity(new Intent(this,AiAssistantActivity.class).putExtra("screen","settings").putExtra("origin_label","我的"));});
         menuRow("手机准备",deviceReady()?"已具备运行条件":"检查还缺哪一步",() -> navigate("setup"));
         menuRow("购票条件","有票后的动作与检查速度",() -> navigate("preferences"));
+        menuRow("观演人","按当前票数设置，与大麦登记信息核对",() -> startActivity(new Intent(this,ViewerSetupActivity.class)));
         menuRow("使用指南与记录","查步骤、查看运行结果",() -> navigate("help"));
         section("维护",null,"");
         menuRow("高级工具","手动目标、兼容设置与导出",() -> openAdvanced("target"));
         menuRow("电脑接手与备份","源码、知识库与交接资料",() -> startActivity(new Intent(this,TransferActivity.class)));
-        add(body,"TicketPilot 0.2.0 · 当前仅支持1张\n自动锁票尚未开放，付款由你完成。",12,MUTED,false,28);
+        add(body,"TicketPilot 0.2.2 · 支持1–2张选票计划\n自动锁票尚未开放，付款由你完成。",12,MUTED,false,28);
         footer.setVisibility(View.GONE);
     }
 
@@ -384,10 +378,8 @@ public final class MainActivity extends Activity {
     private void openCatalog() {
         rememberQuery();
         if(!deviceReady()){navigate("setup");toast("先完成手机准备，就能读取真实演出。");return;}
-        pause("正在选择演出，选好后回到计划。");
-        Intent intent=new Intent(this,CatalogActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
-        if(!query.trim().isEmpty())intent.putExtra("search_query",query.trim());
-        startActivity(intent);
+        MonitorService monitor = MonitorService.instance;
+        if (monitor != null) monitor.openInPlaceCatalog();
     }
 
     private void openNavigator() {

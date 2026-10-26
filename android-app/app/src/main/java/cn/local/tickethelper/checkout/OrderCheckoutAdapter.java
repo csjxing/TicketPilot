@@ -43,22 +43,39 @@ public final class OrderCheckoutAdapter {
     /** Final row binding after locating the actual checkbox, before any selection input. */
     public static boolean viewerControlMatches(Context context, AccessibilityNodeInfo control,
                                                 String name, String suffix, long deadlineElapsedMs) {
+        return viewerControlMatches(context, control, List.of(new ViewerMatcher.RequestedViewer(name, suffix)), deadlineElapsedMs);
+    }
+
+    public static boolean viewerControlMatches(Context context, AccessibilityNodeInfo control,
+                                                List<ViewerMatcher.RequestedViewer> viewers, long deadlineElapsedMs) {
+        if (!ViewerMatcher.validRequests(viewers)) return false;
         String version = installedVersion(context);
         if (!supportedVersion(version)) return false;
         int matching = 0;
         for (CheckoutProfile profile : VERIFIED_PROFILES) {
-            if (profile.appVersion.equals(version) && profile.pages.containsKey(CheckoutObservation.Kind.CONFIRMATION)
-                    && CheckoutViewerBinding.matches(control, profile, name, suffix, deadlineElapsedMs)) matching++;
+            if (!profile.appVersion.equals(version) || !profile.pages.containsKey(CheckoutObservation.Kind.CONFIRMATION)) continue;
+            int identities = 0;
+            for (ViewerMatcher.RequestedViewer viewer : viewers)
+                if (CheckoutViewerBinding.matches(control, profile, viewer.displayName, viewer.documentSuffix, deadlineElapsedMs)) identities++;
+            if (identities > 1) return false;
+            if (identities == 1) matching++;
         }
         return matching == 1;
     }
 
     public static CheckoutParseResult read(AccessibilityService service, LongSupplier generation,
                                            String relatedAttemptId, String viewerName, String viewerSuffix) {
+        return read(service, generation, relatedAttemptId, List.of(new ViewerMatcher.RequestedViewer(viewerName, viewerSuffix)));
+    }
+
+    public static CheckoutParseResult read(AccessibilityService service, LongSupplier generation,
+                                           String relatedAttemptId, List<ViewerMatcher.RequestedViewer> viewers) {
+        if (!ViewerMatcher.validRequests(viewers)) return unavailable("invalid_viewer_config", relatedAttemptId);
+        List<ViewerMatcher.RequestedViewer> requested = List.copyOf(viewers);
         String version = installedVersion(service);
         if (!supportedVersion(version)) return unavailable("checkout_version_not_verified", relatedAttemptId);
         CheckoutFrame frame = CheckoutFrameReader.capture(service, version, generation);
-        CheckoutPageParser.ViewerResolver resolver = (rows, complete) -> ViewerMatcher.match(viewerName, viewerSuffix, rows, complete);
+        CheckoutPageParser.ViewerResolver resolver = (rows, complete) -> ViewerMatcher.matchMany(requested, rows, complete);
         CheckoutParseResult selected = null;
         for (CheckoutProfile profile : VERIFIED_PROFILES) {
             if (!profile.appVersion.equals(version)) continue;
