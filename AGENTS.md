@@ -11,6 +11,13 @@
 - 不把 API Key、实名资料、设备标识、会话原文、页面截图、签名密钥、订单记录、`local.properties`、`.runtime/`、`evidence/`、`exports/` 或构建产物提交到仓库。
 - 签名密钥需持有者另行安全配置；签名冲突时禁止卸载或清数据绕过，保留手机上的配置和订单防重记录。
 
+## 默认发包交付
+
+- 用户已明确要求：应用改动完成并通过相关检查后，直接向 `csjxing/TicketPilot` 的 GitHub Releases 发布新版 APK，提供手机可直接下载的完整 URL，无需每轮重复询问是否发布。
+- 递增版本号与 versionCode，保持原签名；发布同版本 APK、Android 源码交接 ZIP 和 `cloud-release.json`，按 `cloud/release.md` 核对实际附件、大小和摘要。发布完成后更新 `PROJECT_STATUS.md`。
+- 仅修改说明且应用内容未变时，不制造新的 APK 版本；将说明提交至仓库。检查失败时先修复，不能把不完整上传当作成功发布。
+- GitHub Releases 是公开安装包分发端。私有诊断服务的部署、手机安装、真实运行和待付款结果分别验证，不向公开发布页上传私人记录。
+
 ## 新电脑最短路径
 
 ```sh
