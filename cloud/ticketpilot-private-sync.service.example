@@ -1,0 +1,23 @@
+[Unit]
+Description=TicketPilot private diagnostic sync
+After=network.target
+
+[Service]
+Type=simple
+User=ticketpilot
+Group=ticketpilot
+WorkingDirectory=/opt/ticketpilot/cloud
+EnvironmentFile=/etc/ticketpilot/private-sync.env
+ExecStart=/usr/bin/node /opt/ticketpilot/cloud/server.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+StateDirectory=ticketpilot-private-sync
+UMask=0077
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

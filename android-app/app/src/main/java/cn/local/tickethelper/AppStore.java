@@ -37,9 +37,11 @@ public final class AppStore {
     private final SharedPreferences prefs;
     private final SharedPreferences catalogDisplay;
     private final File history;
+    private final Context appContext;
 
     public AppStore(Context context) {
         Context app = context.getApplicationContext();
+        appContext = app;
         prefs = app.getSharedPreferences("ticket_helper", Context.MODE_PRIVATE);
         catalogDisplay = app.getSharedPreferences("catalog_target_display", Context.MODE_PRIVATE);
         history = new File(app.getFilesDir(), "poll-history.jsonl");
@@ -317,6 +319,10 @@ public final class AppStore {
                 setStatus("本地记录写入失败，请检查手机存储空间。");
             }
         }
+        // The coordinator maps exact known state/reason codes immediately; unknown detail is
+        // discarded. No raw history text, private target or viewer fields enter its queue.
+        try { CloudDiagnostics.get(appContext).onState(state, detail); }
+        catch (RuntimeException ignored) { /* Optional diagnostics cannot interrupt ticket processing. */ }
     }
 
     private int compactHistory() throws Exception {

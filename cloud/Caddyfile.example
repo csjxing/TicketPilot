@@ -1,0 +1,10 @@
+# Replace the example hostname. Caddy obtains/renews TLS for your own domain.
+# Do not expose port 8787 publicly. No request/access body logging is enabled.
+ticketpilot-sync.example.com {
+    request_body {
+        max_size 32KB
+    }
+    reverse_proxy 127.0.0.1:8787 {
+        header_up X-Forwarded-Proto https
+    }
+}

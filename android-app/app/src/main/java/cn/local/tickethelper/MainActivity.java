@@ -328,9 +328,10 @@ public final class MainActivity extends Activity {
         menuRow("观演人","按当前票数设置，与大麦登记信息核对",() -> startActivity(new Intent(this,ViewerSetupActivity.class)));
         menuRow("使用指南与记录","查步骤、查看运行结果",() -> navigate("help"));
         section("维护",null,"");
+        menuRow("云端协作","安装更新、上传诊断与跨电脑排查",() -> startActivity(new Intent(this,CloudActivity.class)));
         menuRow("高级工具","手动目标、兼容设置与导出",() -> openAdvanced("target"));
         menuRow("电脑接手与备份","源码、知识库与交接资料",() -> startActivity(new Intent(this,TransferActivity.class)));
-        add(body,"TicketPilot 0.2.3 · 支持1–2张选票计划\n自动锁票尚未开放，付款由你完成。",12,MUTED,false,28);
+        add(body,"TicketPilot 0.2.4 · 支持1–2张选票计划\n自动锁票尚未开放，付款由你完成。",12,MUTED,false,28);
         footer.setVisibility(View.GONE);
     }
 
