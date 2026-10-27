@@ -66,6 +66,10 @@ public final class CloudActivity extends Activity {
         text(body, "手机接收更新，电脑接收诊断。离开电脑也能继续改进。", 15, MUTED, false);
         if (!notice.isEmpty()) text(body, notice, 14, BLUE, true);
 
+        LinearLayout relay = card(); text(relay, "文件中转站 · 远程诊断", 20, INK, true);
+        text(relay, "把脱敏诊断发给电脑，从同一个中转站下载新版 APK。首次连接一次即可。", 15, MUTED, false);
+        button(relay, "打开远程诊断", true, () -> startActivity(new Intent(this, RelayActivity.class)));
+
         LinearLayout update = card(); text(update, "应用更新", 20, INK, true);
         text(update, "当前版本 " + ownVersion(), 14, MUTED, false);
         text(update, updateStatus, 15, INK, false);
@@ -83,7 +87,7 @@ public final class CloudActivity extends Activity {
         text(update, "来自 GitHub · 同签名覆盖安装，保留本机资料。系统会要求你确认安装。", 12, MUTED, false);
         button(update, "打开版本下载页 ↗", false, () -> openUrl("https://github.com/csjxing/TicketPilot/releases"));
 
-        LinearLayout sync = card(); text(sync, "诊断同步", 20, INK, true);
+        LinearLayout sync = card(); text(sync, "独立诊断服务器（高级）", 20, INK, true);
         SyncSecretsStore.Connection connection = connection();
         text(sync, connection == null ? "尚未连接私有诊断云端" : connection.expired(System.currentTimeMillis()) ? "云端连接已过期，请重新配对" : "已连接私有云端", 15, INK, true);
         if (connection != null) text(sync, connection.endpoint.baseUrl, 12, MUTED, false);

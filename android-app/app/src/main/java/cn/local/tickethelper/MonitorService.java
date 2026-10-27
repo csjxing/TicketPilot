@@ -80,7 +80,9 @@ public final class MonitorService extends AccessibilityService {
     private long transitionAt;
     private Decision.Action transitionAction = Decision.Action.NONE;
     private String lastStatus = "";
-    private int unknownCount, actionFailures, invalidatedFrames;
+    private int unknownCount, actionFailures;
+    private final cn.local.tickethelper.core.ReadStability readRecovery = new cn.local.tickethelper.core.ReadStability();
+    private long readBoundaryGeneration, lastReadBoundaryElapsed;
     private final Runnable tick = () -> { scheduledAt = 0; scan(); };
     private Runnable watchdog;
     private final BroadcastReceiver stopReceiver = new BroadcastReceiver() {
@@ -198,6 +200,9 @@ public final class MonitorService extends AccessibilityService {
     CatalogController catalogController() { return catalog; }
     List<UiItem> catalogReadNodes() { return readNodes(); }
     long catalogWindowGeneration() { return windowGeneration; }
+    long catalogReadBoundaryGeneration() { return readBoundaryGeneration; }
+    long catalogLastReadBoundaryElapsed() { return lastReadBoundaryElapsed; }
+    int catalogCurrentReadWindow() { return currentReadWindow(); }
     /** Main-thread timing/diagnostics only; these never replace the existing frame generation gate. */
     long catalogLastWindowChangeElapsed() { return lastWindowChangeElapsed; }
     String catalogLastWindowEventSummary() { return lastWindowEventSummary; }
@@ -374,7 +379,7 @@ public final class MonitorService extends AccessibilityService {
         if (ocr.isBusy()) { ocr.close(); ocr = new OcrReader(this); }
         generation++; engine.reset(); busy = false; running = true; targetSeen = false;
         startedAt = SystemClock.elapsedRealtime(); lastNavigationAt = 0; nextActionAt = 0;
-        lastCaptureAt = 0; unknownCount = 0; actionFailures = 0; invalidatedFrames = 0;
+        lastCaptureAt = 0; unknownCount = 0; actionFailures = 0; readRecovery.reset();
         lastStatus = ""; transitionAction = Decision.Action.NONE; scheduledAt = 0;
         getSystemService(NotificationManager.class).cancel(11);
         getSystemService(NotificationManager.class).cancel(12);
@@ -434,10 +439,14 @@ public final class MonitorService extends AccessibilityService {
         if (!busy) schedule(500);
     }
 
-    /** Called at precisely the old generation-increment sites; no event is newly ignored. */
+    /** Strict input generation still includes every old event. Read recovery distinguishes content-only noise. */
     private void recordWindowChange(int type, String pkg) {
         windowGeneration++;
         lastWindowChangeElapsed = SystemClock.elapsedRealtime();
+        if (type != AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED || !TARGET.equals(pkg)) {
+            readBoundaryGeneration++;
+            lastReadBoundaryElapsed = lastWindowChangeElapsed;
+        }
         String source = TARGET.equals(pkg) ? "target" : getPackageName().equals(pkg) ? "helper"
                 : "android".equals(pkg) || "com.android.systemui".equals(pkg) || "com.android.settings".equals(pkg)
                 ? "system" : "other";
@@ -498,6 +507,8 @@ public final class MonitorService extends AccessibilityService {
         if (ocr.isBusy()) { schedule(700); return; }
         busy = true;
         long token = generation, pageToken = windowGeneration, began = SystemClock.elapsedRealtime();
+        long boundaryToken = readBoundaryGeneration;
+        int readWindow = currentReadWindow();
         long observedAt = System.currentTimeMillis();
         if (watchdog != null) handler.removeCallbacks(watchdog);
         watchdog = () -> {
@@ -511,33 +522,81 @@ public final class MonitorService extends AccessibilityService {
         List<UiItem> nodes = readNodes();
         Decision decision = engine.evaluate(config, new Observation(TARGET, nodes, observedAt), lastNavigationAt);
         if (decision.state != Decision.State.UNKNOWN) {
+            if (valid(token, pageToken)) readRecovery.reset();
             handle(decision, began, token, pageToken, nodes.size(), 0, false); return;
         }
         long sinceCapture = SystemClock.elapsedRealtime() - lastCaptureAt;
         if (sinceCapture < 700) { busy = false; schedule(700 - sinceCapture); return; }
         lastCaptureAt = SystemClock.elapsedRealtime();
-        ocr.read(nodes, observedAt, (items, evidence, error) -> {
+        ocr.readGuarded(nodes, observedAt, (items, evidence, proof, error) -> {
             if (token != generation) return;
-            if (!valid(token, pageToken)) {
-                busy = false; invalidatedFrames++;
-                store.appendEvent("UNKNOWN", "page_changed_during_read", SystemClock.elapsedRealtime() - began);
-                if (invalidatedFrames >= 6) stop("页面持续变化，无法可靠读取，已暂停。", "UNKNOWN", "unstable_page", true);
-                else if (running) schedule(700);
-                return;
-            }
-            invalidatedFrames = 0;
             if (error != null) {
                 stop("页面截图或本地识别不可用，请在手机检查后重新开始。", "BLOCKED", error, true); return;
             }
-            List<UiItem> merged = new ArrayList<>(nodes);
-            for (UiItem text : items) {
-                boolean duplicate = nodes.stream().anyMatch(n -> n.text.equals(text.text)
-                        && Math.abs(n.centerY() - text.centerY()) < 30 && Math.abs(n.centerX() - text.centerX()) < 50);
-                if (!duplicate) merged.add(text);
+            if (!valid(token, pageToken)) {
+                long currentPage = windowGeneration;
+                if (running && unlocked() && TARGET.equals(foreground())
+                        && cn.local.tickethelper.core.ReadStability.mayRecheck(pageToken, currentPage,
+                        boundaryToken, readBoundaryGeneration, readWindow, currentReadWindow(),
+                        SystemClock.elapsedRealtime() - began)
+                        && cn.local.tickethelper.core.ReadStability.sameNative(nodes, readNodes())) {
+                    // A content notification alone is not a changed page. Recheck the complete original
+                    // crop, including new dialogs/selection colours, before rebasing the strict token.
+                    ocr.verifyFrame(proof, () -> valid(token, currentPage) && boundaryToken == readBoundaryGeneration
+                                    && currentReadWindow() == readWindow
+                                    && SystemClock.elapsedRealtime() - began < cn.local.tickethelper.core.ReadStability.MAX_FRAME_AGE_MS,
+                            matches -> {
+                                if (token != generation) return;
+                                if (matches && valid(token, currentPage) && boundaryToken == readBoundaryGeneration
+                                        && currentReadWindow() == readWindow
+                                        && SystemClock.elapsedRealtime() - began < cn.local.tickethelper.core.ReadStability.MAX_FRAME_AGE_MS
+                                        && cn.local.tickethelper.core.ReadStability.sameNative(nodes, readNodes())) {
+                                    store.appendEvent("READ_RECOVERY", "read_content_revalidated", SystemClock.elapsedRealtime() - began);
+                                    acceptMonitorRead(nodes, items, evidence, observedAt, began, token, currentPage);
+                                } else deferChangedRead(began);
+                            });
+                } else deferChangedRead(began);
+                return;
             }
-            Decision read = engine.evaluate(config, new Observation(TARGET, merged, observedAt, evidence), lastNavigationAt);
-            handle(read, began, token, pageToken, nodes.size(), items.size(), true);
+            acceptMonitorRead(nodes, items, evidence, observedAt, began, token, pageToken);
         });
+    }
+
+    private int currentReadWindow() {
+        AccessibilityNodeInfo root = getRootInActiveWindow();
+        if (root == null || !TARGET.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) return -1;
+        android.view.accessibility.AccessibilityWindowInfo window = root.getWindow();
+        return window != null && window.isActive() && window.getDisplayId() == android.view.Display.DEFAULT_DISPLAY
+                ? root.getWindowId() : -1;
+    }
+
+    private void acceptMonitorRead(List<UiItem> nodes, List<UiItem> items, Observation.VerifiedSelection evidence,
+                                   long observedAt, long began, long token, long pageToken) {
+        if (!valid(token, pageToken)) { deferChangedRead(began); return; }
+        readRecovery.reset();
+        List<UiItem> merged = new ArrayList<>(nodes);
+        for (UiItem text : items) {
+            boolean duplicate = nodes.stream().anyMatch(n -> n.text.equals(text.text)
+                    && Math.abs(n.centerY() - text.centerY()) < 30 && Math.abs(n.centerX() - text.centerX()) < 50);
+            if (!duplicate) merged.add(text);
+        }
+        // Preserve the original OCR observation time; visual revalidation never renews input freshness.
+        Decision read = engine.evaluate(config, new Observation(TARGET, merged, observedAt, evidence), lastNavigationAt);
+        handle(read, began, token, pageToken, nodes.size(), items.size(), true);
+    }
+
+    private void deferChangedRead(long began) {
+        if (!running) return;
+        busy = false;
+        store.appendEvent("UNKNOWN", "page_changed_during_read", SystemClock.elapsedRealtime() - began);
+        if (!readRecovery.retry(SystemClock.elapsedRealtime())) {
+            stop("页面信息持续变化，重读仍未核实。请停留在目标票档页后重新开始。", "UNKNOWN", "unstable_page", true);
+            return;
+        }
+        status("页面正在更新，正在重新读取（" + readRecovery.attempts() + "/"
+                + cn.local.tickethelper.core.ReadStability.MAX_ATTEMPTS + "），尚未判断有票或缺货。");
+        store.appendEvent("READ_RECOVERY", "read_recovery_waiting", readRecovery.attempts());
+        schedule(readRecovery.delayMs());
     }
 
     private boolean valid(long token, long pageToken) {

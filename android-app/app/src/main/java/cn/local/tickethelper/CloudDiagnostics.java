@@ -13,6 +13,7 @@ import cn.local.tickethelper.core.MonitorStopState;
 import cn.local.tickethelper.sync.DiagnosticCollector;
 import cn.local.tickethelper.sync.DiagnosticQueue;
 import cn.local.tickethelper.sync.DiagnosticReport;
+import cn.local.tickethelper.sync.DiagnosticHistory;
 import cn.local.tickethelper.sync.DiagnosticSyncClient;
 import cn.local.tickethelper.sync.SyncEndpoint;
 import cn.local.tickethelper.sync.SyncSecretsStore;
@@ -42,6 +43,11 @@ public final class CloudDiagnostics {
     private static final long COALESCE_MS = 15000, MAX_BACKOFF_MS = 15 * 60 * 1000;
     private final Context context;
     private final DiagnosticQueue queue;
+    private final DiagnosticHistory history;
+    private final String sharingInstallId;
+    private final boolean sharingIdentityReady;
+    private long sharingSequence;
+    private boolean historyWriteScheduled;
     private final SyncSecretsStore secrets;
     private final SharedPreferences metadata;
     private final Object stateLock = new Object(), controls = new Object(), network = new Object();
@@ -66,6 +72,22 @@ public final class CloudDiagnostics {
         queue = new DiagnosticQueue(new File(context.getNoBackupFilesDir(), "cloud-diagnostics"));
         secrets = new SyncSecretsStore(context);
         metadata = context.getSharedPreferences("cloud_diagnostic_status", Context.MODE_PRIVATE);
+        history = new DiagnosticHistory(new File(context.getNoBackupFilesDir(), "local-diagnostics"));
+        String storedSharingId = ""; boolean identityReady = false;
+        try {
+            storedSharingId = metadata.getString("sharing_install_id", "");
+            sharingSequence = metadata.getLong("sharing_sequence", 0);
+            if (storedSharingId.isEmpty() && sharingSequence == 0) {
+                storedSharingId = java.util.UUID.randomUUID().toString();
+                identityReady = metadata.edit().putString("sharing_install_id",storedSharingId).commit();
+            } else {
+                java.util.UUID identity = java.util.UUID.fromString(storedSharingId);
+                identityReady = identity.version()==4 && identity.variant()==2 && identity.toString().equals(storedSharingId)
+                        && sharingSequence>=0 && sharingSequence<=DiagnosticReport.MAX_SEQUENCE;
+            }
+        } catch (RuntimeException unreadableIdentity) { identityReady = false; }
+        sharingInstallId = storedSharingId;
+        sharingIdentityReady = identityReady;
         lastSuccessAtMs = metadata.getLong("last_success_at_ms", 0);
         lastCursor = metadata.getLong("last_cursor", 0);
         lastReportId = metadata.getString("last_report_id", "");
@@ -84,8 +106,27 @@ public final class CloudDiagnostics {
 
     public DiagnosticReport captureManual() throws IOException {
         long now = System.currentTimeMillis();
-        return queue.enqueue(snapshot(observedState), List.of(new DiagnosticReport.Event(now,
-                DiagnosticReport.Tag.USER, DiagnosticReport.Code.MANUAL_REPORT)), now);
+        List<DiagnosticReport.Event> recent = history.snapshot();
+        recent.add(new DiagnosticReport.Event(now, DiagnosticReport.Tag.USER, DiagnosticReport.Code.MANUAL_REPORT));
+        return queue.enqueue(snapshot(observedState), recent, now);
+    }
+
+    /** Relay/export capture does not enqueue records for an unrelated private diagnostics server. */
+    public DiagnosticReport captureForSharing() throws IOException {
+        synchronized (stateLock) {
+            if (!sharingIdentityReady) throw new IOException("本机诊断身份未能保存或读取，请重启应用后再试；购票资料未改变。");
+            if (sharingSequence >= DiagnosticReport.MAX_SEQUENCE) throw new IOException("诊断序号已满。");
+            long sequence = sharingSequence + 1;
+            if (!metadata.edit().putLong("sharing_sequence",sequence).commit()) throw new IOException("诊断序号未保存。");
+            sharingSequence = sequence;
+            long now = System.currentTimeMillis();
+            List<DiagnosticReport.Event> recent = history.snapshot();
+            try {
+                recent.add(new DiagnosticReport.Event(now,DiagnosticReport.Tag.USER,DiagnosticReport.Code.MANUAL_REPORT));
+                return new DiagnosticReport(java.util.UUID.randomUUID().toString(),sharingInstallId,sequence,now,snapshot(observedState),recent);
+            }
+            catch (RuntimeException invalid) { throw new IOException("无法生成诊断，请检查手机日期和版本。"); }
+        }
     }
 
     public SyncSecretsStore.Connection pair(String url, String code) throws IOException {
@@ -182,6 +223,17 @@ public final class CloudDiagnostics {
         Mapped mapped = mapWithReason(name, detail);
         if (mapped == null) return;
         if (mapped.state != null) observedState = mapped.state;
+        if (history.record(System.currentTimeMillis(), mapped.tag, mapped.code)) {
+            synchronized (stateLock) {
+                if (!historyWriteScheduled) {
+                    historyWriteScheduled = true;
+                    worker.schedule(() -> {
+                        synchronized (stateLock) { historyWriteScheduled = false; }
+                        try { history.persist(); } catch (IOException ignored) { /* No network or monitor side effect. */ }
+                    }, 1000, TimeUnit.MILLISECONDS);
+                }
+            }
+        }
         if (!autoEnabled) return;
         synchronized (stateLock) {
             if (!autoEnabled || mapped.key.equals(lastIncoming)) return;
@@ -365,6 +417,11 @@ public final class CloudDiagnostics {
         }
     }
     private static Mapped mapWithReason(String name, String detail) {
+        if ("READ_RECOVERY".equals(name)) {
+            if ("read_recovery_waiting".equals(detail)) return new Mapped(null, DiagnosticReport.Tag.MONITOR, DiagnosticReport.Code.READ_RETRY);
+            if ("read_content_revalidated".equals(detail)) return new Mapped(null, DiagnosticReport.Tag.MONITOR, DiagnosticReport.Code.READ_RECOVERED);
+            return null;
+        }
         Mapped base = map(name);
         if (base == null) return null;
         DiagnosticReport.Code reason = reasonCode(name, detail);

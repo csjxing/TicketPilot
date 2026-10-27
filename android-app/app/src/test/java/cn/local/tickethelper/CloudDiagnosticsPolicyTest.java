@@ -55,4 +55,11 @@ public final class CloudDiagnosticsPolicyTest {
         assertEquals(DiagnosticReport.Code.UNKNOWN, CloudDiagnostics.mappedCode("UNKNOWN", "connected_ready"));
         assertEquals(DiagnosticReport.Code.UNKNOWN, CloudDiagnostics.mappedCode("UNKNOWN", "initialization_failed:IllegalStateException"));
     }
+    @Test public void recoveryEventsStayClosedAndDoNotInventAnInventoryState() {
+        assertEquals(DiagnosticReport.Code.READ_RETRY, CloudDiagnostics.mappedCode("READ_RECOVERY", "read_recovery_waiting"));
+        assertEquals(DiagnosticReport.Code.READ_RECOVERED, CloudDiagnostics.mappedCode("READ_RECOVERY", "read_content_revalidated"));
+        assertNull(CloudDiagnostics.mappedState("READ_RECOVERY"));
+        assertEquals(DiagnosticReport.Code.UNKNOWN, CloudDiagnostics.mappedCode("READ_RECOVERY", "read_content_revalidated private"));
+        assertEquals(DiagnosticReport.Code.UNKNOWN, CloudDiagnostics.mappedCode("READ_RECOVERY", "official_pending_order_verified"));
+    }
 }

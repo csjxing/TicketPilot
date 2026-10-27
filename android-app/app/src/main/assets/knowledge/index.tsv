@@ -1,4 +1,4 @@
-tickethelper-knowledge-v1	2026-10-27	0.2.5
+tickethelper-knowledge-v1	2026-10-28	0.2.6
 quick-start	准备使用	在这台手机上开始使用	从计划开始，领航员显示当前步骤与下一步；日常操作在手机完成，物理拔线运行仍待验收。	入门 开始 启动 教程 如何使用 第一次 本机 vivo 计划 领航员 下一步	quick-start.md
 permissions	准备使用	权限、连接和手机重启	区分服务启动、授权、连接和开始监控；重启后可按官方无线调试流程启动 Shizuku。	无障碍 TalkBack Shizuku 连接 未就绪 通知 权限 vivo 无线调试 重启 AI API Key 密钥 接口	permissions.md
 select-event	准备使用	搜索演出，选择场次和票价	从手机中的真实大麦读取后选择，减少手填；保存目标不会开始监控。	搜索 名称 场次 日期 票价 预算 手动填写 大麦 AI 模型 配置 建议 比较	select-event.md
@@ -6,4 +6,4 @@ monitoring	正在监控	看懂监控状态和提醒	区分尚未运行、正在�
 troubleshooting	正在监控	停住了，该怎么办	先在这台手机处理连接、锁屏或页面异常；需要开发排查时，再导出资料给电脑接手。	故障 不动 没反应 打不开 block 排队 验证码 网络 断开 排查 重启 AI 模型 异常 超时	troubleshooting.md
 move-phone	单机与维护	本机独立使用，换电脑继续开发	手机负责日常运行；电脑交接包让新的 Codex 会话读懂工程，继续调试与增强。	单机 独立运行 不连电脑 无线调试 换电脑 Codex 交接 备份 恢复 导入 导出 ZIP 源码	move-phone.md
 capabilities	单机与维护	当前能做什么，还缺什么	已验证连接电脑时自动选票到确认页；自动锁单和物理拔线运行仍未验收。	版本 升级 兼容 成功率 验收 能力 限制 隐私 独立运行 AI 大模型 学习 笔记	capabilities.md
-developer-handoff	开发交接	让新电脑和 Codex 快速接手	先读交接与验收；只读原生结构采集已构建、真机待验收，数量加号和锁单适配未完成。	开发 代码 工程 架构 交接 知识库 编译 测试 待办 source Codex 电脑 doctor 云端 同步 更新 APK GitHub 诊断 配对 原生结构 数量加号	developer-handoff.md
+developer-handoff	开发交接	让新电脑和 Codex 快速接手	通过文件中转站共享固定诊断，理解读取误暂停修复；本版整包与真机待验收，双票及待付款未完成。	开发 代码 工程 架构 交接 知识库 编译 测试 待办 source Codex 电脑 doctor 云端 同步 更新 APK GitHub 远程诊断 文件中转站 远见中转 页面持续变化 原生结构 数量加号	developer-handoff.md

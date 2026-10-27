@@ -28,7 +28,9 @@ import cn.local.tickethelper.catalog.ReservationSessionParser;
 import cn.local.tickethelper.catalog.CatalogProject;
 import cn.local.tickethelper.catalog.CatalogSession;
 import cn.local.tickethelper.catalog.CatalogTier;
+import cn.local.tickethelper.catalog.CatalogSelection;
 import cn.local.tickethelper.core.UiItem;
+import cn.local.tickethelper.core.ReadStability;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -191,7 +193,9 @@ public final class CatalogController implements AutoCloseable {
         long now = SystemClock.elapsedRealtime();
         // Returning apps can still finish notification/task-window transitions after
         // their root becomes visible. Keep the original budget while waiting for quiet.
-        boolean settled = foreground && now - service.catalogLastWindowChangeElapsed() >= 300;
+        // Content notifications/advertising must not restart the foreground handoff forever.
+        // READY only permits a fresh read, whose semantic/visual and input guards remain below.
+        boolean settled = foreground && now - service.catalogLastReadBoundaryElapsed() >= 300;
         switch (expected.observe(now, settled, unlocked(), service.isRunning() || appStore.isArmed())) {
             case WAITING: later(200, () -> awaitDamai(expected, action)); return;
             case READY:
@@ -499,12 +503,14 @@ public final class CatalogController implements AutoCloseable {
             this.nativeWindowId = nativeWindowId; this.nativeSignature = nativeSignature;
         }
     }
-    private void read(FrameCallback callback) { read(callback, false); }
-    private void read(FrameCallback callback, boolean retried) {
+    private void read(FrameCallback callback) { read(callback, 0); }
+    private void read(FrameCallback callback, int attempt) {
         if (!safe()) return;
         List<UiItem> nodes = service.catalogReadNodes();
         if (!CatalogParser.blockedReason(nodes).isEmpty()) { fail("当前为登录、验证、订单或异常页面，请先在大麦处理。", "restricted_page"); return; }
         long token = generation, page = service.catalogWindowGeneration(), captured = SystemClock.elapsedRealtime();
+        long boundary = service.catalogReadBoundaryGeneration();
+        int windowId = service.catalogCurrentReadWindow();
         String signature = nativeSignature(nodes);
         AccessibilityNodeInfo root = service.getRootInActiveWindow();
         if (signature != null && root != null) {
@@ -515,23 +521,62 @@ public final class CatalogController implements AutoCloseable {
             return;
         }
         if (reader.isBusy()) { fail("上次页面读取尚未结束，请稍后重试。", "reader_busy"); return; }
-        reader.readCatalog(nodes, System.currentTimeMillis(), (texts, evidence, catalogSelection, error) -> {
+        reader.readCatalogGuarded(nodes, System.currentTimeMillis(), (texts, evidence, catalogSelection, proof, error) -> {
             if (!validToken(token)) return;
             if (!safe()) return;
             if (error != null) { fail("大麦当前画面无法读取，请检查是否出现验证或受保护页面。", "reader_unavailable"); return; }
             if (page != service.catalogWindowGeneration() || SystemClock.elapsedRealtime() - captured > FRAME_LIFETIME) {
-                if (!retried) { later(650, () -> read(callback, true)); return; }
-                fail("大麦页面仍在变化，请等待页面稳定后重新读取。", "frame_changed"); return;
+                long currentPage = service.catalogWindowGeneration();
+                if (ReadStability.mayRecheck(page, currentPage, boundary, service.catalogReadBoundaryGeneration(),
+                        windowId, service.catalogCurrentReadWindow(), SystemClock.elapsedRealtime() - captured)
+                        && ReadStability.sameNative(nodes, service.catalogReadNodes())) {
+                    reader.verifyFrame(proof, () -> validToken(token) && unlocked() && !service.isRunning() && !appStore.isArmed()
+                                    && currentPage == service.catalogWindowGeneration() && windowId == service.catalogCurrentReadWindow()
+                                    && boundary == service.catalogReadBoundaryGeneration()
+                                    && SystemClock.elapsedRealtime() - captured < FRAME_LIFETIME,
+                            matches -> {
+                                if (!validToken(token) || !safe()) return;
+                                if (matches && currentPage == service.catalogWindowGeneration()
+                                        && boundary == service.catalogReadBoundaryGeneration()
+                                        && windowId == service.catalogCurrentReadWindow()
+                                        && SystemClock.elapsedRealtime() - captured < FRAME_LIFETIME
+                                        && ReadStability.sameNative(nodes, service.catalogReadNodes())) {
+                                    appStore.appendEvent("READ_RECOVERY", "read_content_revalidated", SystemClock.elapsedRealtime() - captured);
+                                    deliverOcrFrame(callback, nodes, texts, evidence, catalogSelection, captured, currentPage);
+                                } else retryCatalogRead(callback, attempt);
+                            });
+                } else retryCatalogRead(callback, attempt);
+                return;
             }
-            List<UiItem> all = new ArrayList<>(nodes);
-            for (UiItem text : texts) {
-                boolean duplicate = nodes.stream().anyMatch(node -> node.text.equals(text.text)
-                        && Math.abs(node.centerY() - text.centerY()) < 30 && Math.abs(node.centerX() - text.centerX()) < 50);
-                if (!duplicate) all.add(text);
-            }
-            if (!CatalogParser.blockedReason(all).isEmpty()) { fail("当前为登录、验证、订单或异常页面，请先在大麦处理。", "restricted_page"); return; }
-            callback.accept(new Frame(all, captured, page, evidence, catalogSelection, -1, null));
+            deliverOcrFrame(callback, nodes, texts, evidence, catalogSelection, captured, page);
         });
+    }
+
+    private void retryCatalogRead(FrameCallback callback, int attempt) {
+        if (!safe()) return;
+        if (attempt >= 3 || SystemClock.elapsedRealtime() - operationStartedAt >= 15_000) {
+            fail("页面信息仍在变化，未读取成功。请停留在目标场次页，再点“使用当前场次”。", "frame_changed"); return;
+        }
+        CatalogStore.update("BUSY", "页面正在更新，正在重新核对（" + (attempt + 1) + "/3）…", query, event, session,
+                List.of(), List.of(), List.of(), 0);
+        appStore.appendEvent("READ_RECOVERY", "read_recovery_waiting", attempt + 1);
+        later(550 + attempt * 200L, () -> read(callback, attempt + 1));
+    }
+
+    private void deliverOcrFrame(FrameCallback callback, List<UiItem> nodes, List<UiItem> texts,
+                                 cn.local.tickethelper.core.Observation.VerifiedSelection evidence,
+                                 CatalogSelection catalogSelection, long captured, long page) {
+        if (!safe()) return;
+        if (page != service.catalogWindowGeneration() || SystemClock.elapsedRealtime() - captured >= FRAME_LIFETIME) return;
+        List<UiItem> all = new ArrayList<>(nodes);
+        for (UiItem text : texts) {
+            boolean duplicate = nodes.stream().anyMatch(node -> node.text.equals(text.text)
+                    && Math.abs(node.centerY() - text.centerY()) < 30 && Math.abs(node.centerX() - text.centerX()) < 50);
+            if (!duplicate) all.add(text);
+        }
+        if (!CatalogParser.blockedReason(all).isEmpty()) { fail("当前为登录、验证、订单或异常页面，请先在大麦处理。", "restricted_page"); return; }
+        // captured and typed selection evidence keep their original times after visual validation.
+        callback.accept(new Frame(all, captured, page, evidence, catalogSelection, -1, null));
     }
 
     /** One bounded tap, then a new read must verify its effect. No stored coordinates and no retry. */
