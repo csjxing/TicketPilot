@@ -3,5 +3,6 @@
     <application>
         <activity android:name=".TouchDiagnosticActivity" android:exported="true" />
         <receiver android:name=".DebugSkuProbeReceiver" android:exported="false" />
+        <receiver android:name=".DebugUiSnapshotReceiver" android:exported="false" />
     </application>
 </manifest>
