@@ -10,6 +10,7 @@ import android.util.DisplayMetrics;
 import android.view.Display;
 import androidx.annotation.Keep;
 import cn.local.tickethelper.core.ShellTapPolicy;
+import cn.local.tickethelper.core.DetailScrollPolicy;
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -75,6 +76,15 @@ public final class ShellTapUserService extends IShellTapService.Stub {
     }
 
     @Override public String tap(long token, long revision, int x, int y, long deadline, IDispatchGuard guard) {
+        return dispatch(token, revision, x, y, null, deadline, guard);
+    }
+
+    @Override public String scrollDetailUp(long token, long revision, int left, int top, int right, int bottom,
+                                         long deadline, IDispatchGuard guard) {
+        return dispatch(token, revision, 0, 0, new int[]{left, top, right, bottom}, deadline, guard);
+    }
+
+    private String dispatch(long token, long revision, int x, int y, int[] scrollFrame, long deadline, IDispatchGuard guard) {
         enforceOwner();
         if (guard == null) return "dispatch_guard_required";
         long start = SystemClock.elapsedRealtime();
@@ -89,7 +99,11 @@ public final class ShellTapUserService extends IShellTapService.Stub {
         try {
             if (!screenSafe()) return "screen_locked_or_off";
             DisplayMetrics metrics = displayMetrics();
-            String invalid = ShellTapPolicy.validate(x, y, metrics.widthPixels, metrics.heightPixels,
+            DetailScrollPolicy.Plan scroll = scrollFrame == null ? null : DetailScrollPolicy.forRoot(
+                    scrollFrame[0], scrollFrame[1], scrollFrame[2], scrollFrame[3], metrics.widthPixels, metrics.heightPixels);
+            if (scrollFrame != null && scroll == null) return "invalid_detail_frame";
+            int startX = scroll == null ? x : scroll.x, startY = scroll == null ? y : scroll.startY;
+            String invalid = ShellTapPolicy.validate(startX, startY, metrics.widthPixels, metrics.heightPixels,
                     SystemClock.elapsedRealtime(), deadline);
             if (invalid != null) return invalid;
             // Public diagnostic snapshot; discarded immediately and never written to logs or disk.
@@ -101,9 +115,14 @@ public final class ShellTapUserService extends IShellTapService.Stub {
             DisplayMetrics latest = displayMetrics();
             if (latest.widthPixels != metrics.widthPixels || latest.heightPixels != metrics.heightPixels)
                 return "display_changed";
-            invalid = ShellTapPolicy.validate(x, y, latest.widthPixels, latest.heightPixels,
+            invalid = ShellTapPolicy.validate(startX, startY, latest.widthPixels, latest.heightPixels,
                     SystemClock.elapsedRealtime(), end);
             if (invalid != null) return invalid;
+            if (scroll != null) {
+                invalid = ShellTapPolicy.validate(scroll.x, scroll.endY, latest.widthPixels, latest.heightPixels,
+                        SystemClock.elapsedRealtime(), end);
+                if (invalid != null) return invalid;
+            }
             // The application checks the exact captured node/page now, after the asynchronous
             // system snapshot. Its callback is single-use and bounded by the same deadline.
             if (!allowDispatch(guard, end)) return "dispatch_guard_rejected";
@@ -111,7 +130,8 @@ public final class ShellTapUserService extends IShellTapService.Stub {
                 if (!current(token, revision)) return "cancelled";
                 if (SystemClock.elapsedRealtime() >= end) return "stale_deadline";
                 // Spawn and cancellation share a lock: a canceled queued command cannot start later.
-                activeProcess = new ProcessBuilder(ShellTapPolicy.tapCommand(x, y)).redirectErrorStream(true).start();
+                activeProcess = new ProcessBuilder(scroll == null ? ShellTapPolicy.tapCommand(x, y) : scroll.command())
+                        .redirectErrorStream(true).start();
                 inputStarted = true;
             }
             CommandResult result = awaitActive(token, revision, end);

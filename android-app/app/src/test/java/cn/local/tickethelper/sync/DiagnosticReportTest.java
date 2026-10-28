@@ -82,4 +82,29 @@ public final class DiagnosticReportTest {
         try { a.events.add(new DiagnosticReport.Event(NOW, DiagnosticReport.Tag.USER, DiagnosticReport.Code.UNKNOWN)); fail(); }
         catch (UnsupportedOperationException expected) { }
     }
+    @Test public void timingQuantityAndDetailCodesRoundTripWithoutAddingFieldsOrChangingInventoryState() throws Exception {
+        DiagnosticReport old = report();
+        List<DiagnosticReport.Event> events = new ArrayList<>();
+        for (DiagnosticReport.Code code : new DiagnosticReport.Code[]{DiagnosticReport.Code.SALE_WAITING,
+                DiagnosticReport.Code.SALE_OPENING, DiagnosticReport.Code.SALE_MONITORING, DiagnosticReport.Code.SALE_STOPPED,
+                DiagnosticReport.Code.SALE_RESERVATION_REENTRY, DiagnosticReport.Code.QUANTITY_INCREASE_DISPATCHED,
+                DiagnosticReport.Code.QUANTITY_TARGET_UNVERIFIED, DiagnosticReport.Code.QUANTITY_TRANSITION_PAGE_CHANGED,
+                DiagnosticReport.Code.QUANTITY_TRANSITION_UNVERIFIED, DiagnosticReport.Code.QUANTITY_INPUT_UNCONFIRMED,
+                DiagnosticReport.Code.DETAIL_SCROLL_PROPOSED, DiagnosticReport.Code.DETAIL_SCROLL_COMMAND_COMPLETED,
+                DiagnosticReport.Code.DETAIL_SCROLL_ANCHOR_UNVERIFIED, DiagnosticReport.Code.DETAIL_SCROLL_INPUT_UNCONFIRMED})
+            events.add(new DiagnosticReport.Event(NOW, code.name().startsWith("SALE_") ? DiagnosticReport.Tag.MONITOR : DiagnosticReport.Tag.INPUT, code));
+        DiagnosticReport expanded = new DiagnosticReport(old.reportId, old.installId, old.sequence, NOW,
+                snapshot(DiagnosticReport.State.UNKNOWN), events);
+        JSONObject json = expanded.toJson();
+        assertEquals(1, json.getInt("schema")); assertEquals(11, json.length());
+        DiagnosticReport restored = DiagnosticReport.parse(json);
+        assertEquals(DiagnosticReport.State.UNKNOWN, restored.snapshot.state); assertEquals(events.size(), restored.events.size());
+        for (int i = 0; i < events.size(); i++) {
+            assertEquals(events.get(i).code, restored.events.get(i).code);
+            assertEquals(3, json.getJSONArray("events").getJSONObject(i).length());
+        }
+        assertEquals(DiagnosticReport.Code.MANUAL_REPORT, DiagnosticReport.parse(old.toJson()).events.get(0).code);
+        json.getJSONArray("events").getJSONObject(0).put("phase", "private text");
+        try { DiagnosticReport.parse(json); fail(); } catch (IllegalArgumentException expected) { }
+    }
 }

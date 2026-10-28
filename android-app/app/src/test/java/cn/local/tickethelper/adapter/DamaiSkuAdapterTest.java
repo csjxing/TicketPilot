@@ -46,6 +46,7 @@ public class DamaiSkuAdapterTest {
         assertEquals(Integer.valueOf(980), r.evidence.selectedPrice);
         assertEquals(Integer.valueOf(1), r.evidence.quantity); assertEquals(Integer.valueOf(980), r.evidence.totalYuan);
         assertSame(confirm, r.evidence.confirmTarget); assertEquals(1234, r.evidence.observedAtMs);
+        assertFalse(r.evidence.sessionUnavailable);
         assertTrue(r.items.stream().allMatch(i -> i.source == UiItem.Source.OCR));
         assertTrue(r.items.stream().noneMatch(i -> i.selected));
     }
@@ -139,17 +140,191 @@ public class DamaiSkuAdapterTest {
         lines.removeIf(i -> i.text.equals("1张")); assertNull(adapt().evidence.quantity);
     }
 
-    @Test public void selectedDateExplicitlyWithoutTicketsDoesNotVerifySession() {
+    @Test public void closedTotalDiagnosticDistinguishesMissingNativeFields() {
+        nodes.removeIf(i -> i.resourceId.equals(ID + "bottom_layout"));
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.BOTTOM_MISSING);
+        setup(); nodes.removeIf(i -> i.resourceId.equals(ID + "tv_price"));
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.AMOUNT_MISSING);
+        setup(); nodes.removeIf(i -> i.resourceId.equals(ID + "tv_sku_price_prefix"));
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.CURRENCY_MISSING);
+    }
+    @Test public void closedTotalDiagnosticDistinguishesInvalidNativeEvidence() {
+        replaceNode("tv_sku_price_prefix", "$");
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.NATIVE_SHAPE_INVALID);
+        setup(); replaceNode("tv_price", "980.50");
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.NATIVE_AMOUNT_INVALID);
+    }
+    @Test public void closedTotalDiagnosticDistinguishesOcrGeometry() {
+        lines.removeIf(i -> i.text.contains("价格明细") || i.text.equals("确定"));
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.OCR_NO_OVERLAP);
+        addText("¥980 价格明细", 150, 880, 500, 920, ORANGE);
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.OCR_GEOMETRY_MISMATCH);
+    }
+    @Test public void closedTotalDiagnosticDistinguishesOcrMissingOrInvalidNumber() {
+        lines.removeIf(i -> i.text.contains("价格明细"));
+        addText("价格明细", 20, 880, 220, 920, ORANGE);
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.OCR_NUMBER_MISSING);
+        lines.removeIf(i -> i.text.contains("价格明细"));
+        addText("¥980.50 价格明细", 20, 880, 220, 920, ORANGE);
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.OCR_NUMBER_INVALID);
+    }
+    @Test public void closedTotalDiagnosticDistinguishesOcrMismatchAndMultipleAmounts() {
+        lines.removeIf(i -> i.text.contains("价格明细"));
+        addText("¥1960 价格明细", 20, 880, 220, 920, ORANGE);
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.OCR_VALUE_MISMATCH);
+        lines.removeIf(i -> i.text.contains("价格明细"));
+        addText("¥980 1960 价格明细", 20, 880, 220, 920, ORANGE);
+        assertTotalCode(DamaiSkuAdapter.TotalCheckCode.OCR_MULTIPLE_VALUES);
+    }
+    @Test public void closedTotalDiagnosticRetainsOriginalSuccessfulEvidence() {
+        DamaiSkuAdapter.Result result = adapt();
+        assertEquals(DamaiSkuAdapter.TotalCheckCode.VERIFIED, result.totalCheckCode);
+        assertEquals(Integer.valueOf(980), result.evidence.totalYuan);
+    }
+    private void assertTotalCode(DamaiSkuAdapter.TotalCheckCode code) {
+        DamaiSkuAdapter.Result result = adapt();
+        assertNotNull(result.evidence); assertNull(result.evidence.totalYuan);
+        assertEquals(code, result.totalCheckCode);
+    }
+
+    private DamaiSkuAdapter.Result adaptAmountElements(UiItem... elements) {
+        return DamaiSkuAdapter.adapt(nodes, lines, Arrays.asList(elements), frame, 1234);
+    }
+    private static UiItem amountElement(String text, int left, int right) {
+        return new UiItem(text, left, 884, right, 918, true, false, false, UiItem.Source.OCR);
+    }
+    @Test public void wordAmountVerifiesEvenWhenSameRowIncludesDistantConfirmButton() {
+        lines.removeIf(i -> i.text.contains("价格明细"));
+        addText("¥980 价格明细 确定", 20, 880, 580, 920, ORANGE);
+        assertNull(adapt().evidence.totalYuan);
+        DamaiSkuAdapter.Result result = adaptAmountElements(amountElement("¥980", 20, 100), amountElement("确定", 400, 500));
+        assertEquals(Integer.valueOf(980), result.evidence.totalYuan);
+        assertEquals(DamaiSkuAdapter.TotalCheckCode.VERIFIED, result.totalCheckCode);
+        assertEquals(1, result.items.stream().filter(i -> i.text.contains("¥980")).count());
+    }
+    @Test public void wordAmountCanBeSeparateFromCurrencyWithoutEnteringGlobalItems() {
+        DamaiSkuAdapter.Result result = adaptAmountElements(amountElement("¥", 20, 35), amountElement("980", 36, 100));
+        assertEquals(Integer.valueOf(980), result.evidence.totalYuan);
+        assertFalse(result.items.stream().anyMatch(i -> i.text.equals("980")));
+    }
+    @Test public void wordAmountRejectsConflictingOrFractionalValue() {
+        DamaiSkuAdapter.Result conflict = adaptAmountElements(amountElement("1960", 35, 100));
+        assertNull(conflict.evidence.totalYuan);
+        assertEquals(DamaiSkuAdapter.TotalCheckCode.OCR_VALUE_MISMATCH, conflict.totalCheckCode);
+        DamaiSkuAdapter.Result fraction = adaptAmountElements(amountElement("980.5", 35, 100));
+        assertNull(fraction.evidence.totalYuan);
+        assertEquals(DamaiSkuAdapter.TotalCheckCode.OCR_NUMBER_INVALID, fraction.totalCheckCode);
+    }
+    @Test public void wordAmountRejectsMultipleNumbersWithinOneOrSeveralTokens() {
+        assertNull(adaptAmountElements(amountElement("980 1960", 20, 100)).evidence.totalYuan);
+        DamaiSkuAdapter.Result duplicate = adaptAmountElements(amountElement("980", 35, 100), amountElement("1960", 35, 100));
+        assertNull(duplicate.evidence.totalYuan);
+        assertEquals(DamaiSkuAdapter.TotalCheckCode.OCR_MULTIPLE_VALUES, duplicate.totalCheckCode);
+    }
+    @Test public void wordAmountOutsideOrCrossingNativeRegionCannotVerifyTotal() {
+        assertNull(adaptAmountElements(amountElement("980", 150, 220)).evidence.totalYuan);
+        DamaiSkuAdapter.Result crossing = adaptAmountElements(amountElement("980", 35, 200));
+        assertNull(crossing.evidence.totalYuan);
+        assertEquals(DamaiSkuAdapter.TotalCheckCode.OCR_GEOMETRY_MISMATCH, crossing.totalCheckCode);
+        assertNull(adaptAmountElements(amountElement("980", 35, 100), amountElement("1960", 35, 200)).evidence.totalYuan);
+    }
+    @Test public void wordAmountRequiresDedicatedEvidenceAndWholeNumericToken() {
+        assertNull(adaptAmountElements().evidence.totalYuan);
+        assertNull(adaptAmountElements(amountElement("合计980", 20, 100)).evidence.totalYuan);
+        assertNull(adaptAmountElements(amountElement("980元", 20, 100)).evidence.totalYuan);
+        assertEquals(Integer.valueOf(980), adaptAmountElements(amountElement("￥980.00", 20, 100)).evidence.totalYuan);
+    }
+    @Test public void wordAmountDoesNotOverrideNativeAmountOrCurrencyRequirements() {
+        replaceNode("tv_price", "1960");
+        assertNull(adaptAmountElements(amountElement("980", 35, 100)).evidence.totalYuan);
+        setup(); nodes.removeIf(i -> i.resourceId.equals(ID + "tv_sku_price_prefix"));
+        assertNull(adaptAmountElements(amountElement("¥980", 20, 100)).evidence.totalYuan);
+    }
+    @Test public void localGeometryDiagnosticContainsOnlyBoundsAndClosedMetadata() {
+        String report = DamaiSkuAdapter.totalGeometryDiagnostic(nodes,
+                List.of(amountElement("¥980", 20, 100), amountElement("private-text", 140, 250)), 600);
+        assertTrue(report.startsWith("geometry amount=[35,880,100,920] currency=[20,880,35,920]"));
+        assertTrue(report.contains("chars=4 full=true equal=true kind=COMPLETE_NUMBER"));
+        assertTrue(report.contains("full=false equal=false kind=OTHER"));
+        assertFalse(report.contains("980")); assertFalse(report.contains("private-text"));
+    }
+    @Test public void localGeometryDiagnosticCapsFourElementsAndOmitsOtherRowsAndRightSide() {
+        List<UiItem> elements = new ArrayList<>();
+        for (int i = 0; i < 8; i++) elements.add(amountElement("text-that-must-never-appear", 20 + i * 10, 100 + i * 10));
+        elements.add(amountElement("right-side-sentinel", 350, 500));
+        elements.add(new UiItem("other-row-sentinel", 20, 740, 100, 775, true, false, false, UiItem.Source.OCR));
+        String report = DamaiSkuAdapter.totalGeometryDiagnostic(nodes, elements, 600);
+        assertTrue(report.contains(" e3=")); assertFalse(report.contains(" e4="));
+        assertFalse(report.contains("sentinel")); assertFalse(report.contains("must-never"));
+        assertFalse(report.contains("[350,")); assertFalse(report.contains(",740,"));
+    }
+    @Test public void localGeometryDiagnosticClassifiesCompleteMismatchAndMixedTokensWithoutTheirText() {
+        String report = DamaiSkuAdapter.totalGeometryDiagnostic(nodes,
+                List.of(amountElement("1960", 35, 100), amountElement("980价格明细", 110, 280)), 600);
+        assertTrue(report.contains("chars=4 full=true equal=false kind=COMPLETE_NUMBER"));
+        assertTrue(report.contains("full=false equal=false kind=MIXED_NUMBER"));
+        assertFalse(report.contains("1960")); assertFalse(report.contains("980")); assertFalse(report.contains("价格"));
+    }
+    @Test public void localGeometryDiagnosticBoundsCharacterCountAndHandlesMissingNativeFields() {
+        String report = DamaiSkuAdapter.totalGeometryDiagnostic(nodes,
+                List.of(amountElement("x".repeat(2000), 20, 100)), 600);
+        assertTrue(report.contains("chars=64")); assertTrue(report.length() < 350);
+        nodes.removeIf(i -> i.resourceId.equals(ID + "tv_price"));
+        assertEquals("geometry amount=missing currency=[20,880,35,920]",
+                DamaiSkuAdapter.totalGeometryDiagnostic(nodes, List.of(amountElement("hidden", 20, 100)), 600));
+    }
+
+    @Test public void selectedDateExplicitlyWithoutTicketsPreservesOnlyNegativeSessionIdentity() {
         nodes.add(node("tv_tag", "无票", 300, 220, 350, 250, false));
-        assertNull(adapt().evidence);
+        var evidence = adapt().evidence;
+        assertNotNull(evidence); assertTrue(evidence.sessionUnavailable);
+        assertEquals("2026-11-15", evidence.date); assertEquals("19:00", evidence.time);
+        assertEquals(1234, evidence.observedAtMs);
+        assertNull(evidence.selectedPrice); assertNull(evidence.quantity); assertNull(evidence.totalYuan);
+        assertNull(evidence.confirmTarget); assertNull(evidence.quantityIncreaseTarget);
     }
     @Test public void catalogCanNameVisuallySelectedSoldOutSessionWithoutWeakeningMonitorGate() {
         nodes.add(node("tv_tag", "无票", 300, 220, 350, 250, false));
-        var result = adapt(); assertNull(result.evidence);
+        var result = adapt(); assertNotNull(result.evidence); assertTrue(result.evidence.sessionUnavailable);
         assertNotNull(result.catalogSelection);
         assertEquals("2026-11-15",result.catalogSelection.date);
         assertEquals("19:00",result.catalogSelection.time);
         assertEquals(1234,result.catalogSelection.observedAtMs);
+    }
+    @Test public void unavailableSessionStillRequiresUniqueOrangeDateSelection() {
+        nodes.add(node("tv_tag", "无票", 300, 220, 350, 250, false));
+        UiItem other = nodes.get(2); frame.border(other, ORANGE); frame.text(lines.get(0), ORANGE);
+        assertNull(adapt().evidence); assertNull(adapt().catalogSelection);
+    }
+    @Test public void unavailableTagOnUnselectedDateDoesNotMarkSelectedSessionUnavailable() {
+        nodes.add(node("tv_tag", "无票", 300, 120, 350, 150, false));
+        var evidence = adapt().evidence;
+        assertNotNull(evidence); assertFalse(evidence.sessionUnavailable);
+        assertEquals(Integer.valueOf(980), evidence.selectedPrice);
+    }
+    @Test public void unavailableTagCannotVerifyBlackSemanticTextOrMalformedDate() {
+        nodes.add(node("tv_tag", "无票", 300, 220, 350, 250, false));
+        frame.text(lines.get(1), BLACK); assertNull(adapt().evidence);
+        setup(); nodes.add(node("tv_tag", "无票", 300, 220, 350, 250, false));
+        lines.remove(1); addText("2026-11-35周日19:00", 40, 220, 280, 250, ORANGE);
+        assertNull(adapt().evidence);
+    }
+    @Test public void sessionOnlySelectorMergesNativeScopedDateLabelsBeforePricesExist() {
+        nodes.removeIf(i -> i.resourceId.equals(ID + "project_detail_perform_price_flowlayout")
+                || i == selectedPrice || i.resourceId.equals(ID + "bottom_layout"));
+        frame.clear(selectedDate); frame.text(lines.get(1), BLACK);
+        DamaiSkuAdapter.Result result = adapt(); assertNull(result.evidence);
+        assertTrue(result.items.stream().anyMatch(i -> i.text.contains("2026-11-15")
+                && i.left == selectedDate.left && i.top == selectedDate.top
+                && i.right == selectedDate.right && i.bottom == selectedDate.bottom));
+    }
+    @Test public void sessionOnlyNegativeSelectionPreservesIdentityWithoutPriceOrConfirmation() {
+        nodes.removeIf(i -> i.resourceId.equals(ID + "project_detail_perform_price_flowlayout") || i == selectedPrice);
+        nodes.add(node("tv_tag", "无票", 300, 220, 350, 250, false));
+        var evidence = adapt().evidence;
+        assertNotNull(evidence); assertTrue(evidence.sessionUnavailable);
+        assertNull(evidence.selectedPrice); assertNull(evidence.quantity); assertNull(evidence.totalYuan);
+        assertNull(evidence.confirmTarget); assertNull(evidence.quantityIncreaseTarget);
     }
     @Test public void catalogStillRequiresUniqueVisualSelection() {
         frame.clear(selectedDate); frame.text(lines.get(1), BLACK);
@@ -172,6 +347,38 @@ public class DamaiSkuAdapterTest {
         nodes.add(node("error_layout", "", 0, 100, 600, 980, false));
         nodes.add(node("state_view_tip", "暂时无法展示，请稍后再试", 20, 660, 580, 690, false));
         var result=adapt(); assertNull(result.evidence); assertNull(result.catalogSelection);
+    }
+
+    // These public IDs/order derive from historical manual quantity captures, not an automated live pass.
+    private UiItem addQuantityStepper() {
+        nodes.add(node("layout_sku_num_ll", "", 300, 730, 580, 805, false));
+        nodes.add(new UiItem("", 310, 740, 360, 790, false, false, false, UiItem.Source.NODE, ID + "img_jian"));
+        UiItem plus = node("img_jia", "", 500, 740, 550, 790, true); nodes.add(plus); return plus;
+    }
+    @Test public void exactScopedEnabledPlusCanProposeOneToTwoOnlyWithSameFrameFacts() {
+        UiItem plus = addQuantityStepper(); assertSame(plus, adapt().evidence.quantityIncreaseTarget);
+        lines.removeIf(i -> i.text.equals("1张")); assertNull(adapt().evidence.quantityIncreaseTarget);
+    }
+    @Test public void missingStepperOrDuplicatePlusDoesNotInventAnIncreaseControl() {
+        UiItem plus = addQuantityStepper();
+        nodes.removeIf(i -> i.resourceId.equals(ID + "layout_sku_num_ll")); assertNull(adapt().evidence.quantityIncreaseTarget);
+        nodes.add(node("layout_sku_num_ll", "", 300, 730, 580, 805, false));nodes.add(plus);
+        assertNull(adapt().evidence.quantityIncreaseTarget);
+    }
+    @Test public void disabledOrWronglyScopedPlusCannotBeUsed() {
+        UiItem plus = addQuantityStepper(); nodes.remove(plus);
+        nodes.add(new UiItem("",plus.left,plus.top,plus.right,plus.bottom,false,true,false,UiItem.Source.NODE,ID+"img_jia"));
+        assertNull(adapt().evidence.quantityIncreaseTarget);
+        nodes.removeIf(i -> i.resourceId.equals(ID+"img_jia"));nodes.add(node("img_jia","",500,820,550,870,true));
+        assertNull(adapt().evidence.quantityIncreaseTarget);
+    }
+    @Test public void enabledMinusOrUnverifiedPriceAmountOrConfirmBlocksIncrease() {
+        addQuantityStepper();nodes.removeIf(i -> i.resourceId.equals(ID+"img_jian"));
+        nodes.add(node("img_jian","",310,740,360,790,true));assertNull(adapt().evidence.quantityIncreaseTarget);
+        nodes.removeIf(i -> i.resourceId.equals(ID+"img_jian"));
+        nodes.add(new UiItem("",310,740,360,790,false,false,false,UiItem.Source.NODE,ID+"img_jian"));
+        replaceNode("tv_price","1960");assertNull(adapt().evidence.quantityIncreaseTarget);
+        replaceNode("tv_price","980");nodes.remove(confirm);assertNull(adapt().evidence.quantityIncreaseTarget);
     }
 
     private void replaceNode(String id, String text) {

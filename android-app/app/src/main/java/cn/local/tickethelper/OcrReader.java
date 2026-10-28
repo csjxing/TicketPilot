@@ -74,12 +74,17 @@ final class OcrReader implements AutoCloseable {
                     if (pixels != full) full.recycle();
                     Bitmap captured = pixels;
                     recognizer.process(InputImage.fromBitmap(captured, 0)).addOnSuccessListener(text -> {
-                        List<UiItem> items = new ArrayList<>();
+                        List<UiItem> items = new ArrayList<>(), amountElements = new ArrayList<>();
                         for (com.google.mlkit.vision.text.Text.TextBlock block : text.getTextBlocks()) {
                             for (com.google.mlkit.vision.text.Text.Line line : block.getLines()) {
                                 Rect b = line.getBoundingBox();
                                 if (b != null) items.add(new UiItem(line.getText(), b.left, b.top + top, b.right, b.bottom + top,
                                         true, false, false, UiItem.Source.OCR));
+                                for (com.google.mlkit.vision.text.Text.Element element : line.getElements()) {
+                                    Rect e = element.getBoundingBox();
+                                    if (e != null) amountElements.add(new UiItem(element.getText(), e.left, e.top + top,
+                                            e.right, e.bottom + top, true, false, false, UiItem.Source.OCR));
+                                }
                             }
                         }
                         DamaiSkuAdapter.Result adapted;
@@ -97,7 +102,13 @@ final class OcrReader implements AutoCloseable {
                                     return x < 0 || x >= width || localY < 0 || localY >= pixelHeight ? 0 : frame[localY * width + x];
                                 }
                             };
-                            adapted = DamaiSkuAdapter.adapt(nodes, items, sameFrame, observedAtMs);
+                            adapted = DamaiSkuAdapter.adapt(nodes, items, amountElements, sameFrame, observedAtMs);
+                            if ((service.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                                    && adapted.evidence != null && adapted.evidence.selectedPrice != null
+                                    && adapted.evidence.totalYuan == null) {
+                                android.util.Log.d("TicketPilotSku", adapted.totalCheckCode.name());
+                                android.util.Log.d("TicketPilotSku", DamaiSkuAdapter.totalGeometryDiagnostic(nodes, amountElements, width));
+                            }
                         } catch (RuntimeException invalidFrame) {
                             if (!captured.isRecycled()) captured.recycle();
                             busy = false; callback.complete(List.of(), null, null, null, "sku_adapter_failed"); return;

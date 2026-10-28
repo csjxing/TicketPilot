@@ -10,7 +10,15 @@ public final class ActionPacing {
         // Only a fresh verified selection can skip idle waiting. The service still rebinds and checks
         // the live target, foreground, generation and single-input/transition barriers before dispatch.
         long age = nowMillis - decision.observedAtMs;
-        return !retryPending && decision.action == Decision.Action.CONFIRM_TIER && decision.state == Decision.State.TIER_SELECTED
+        boolean verifiedAdvance = decision.action == Decision.Action.CONFIRM_TIER && decision.state == Decision.State.TIER_SELECTED;
+        boolean quantityAdvance = QuantityTransition.isIncreaseProposal(decision);
+        // This reason is emitted only after the engine verifies the configured event/session and
+        // an explicit available label. A plain price or trial PROBE remains ordinarily paced.
+        boolean availableSelection = decision.action == Decision.Action.SELECT_TIER && decision.state == Decision.State.IN_STOCK
+                && "explicit_available_label".equals(decision.reason) && decision.target != null && decision.target.enabled;
+        boolean sameRoundReentry = decision.action == Decision.Action.OPEN_TICKETS && decision.state == Decision.State.READY
+                && "verified_return_detail_entry".equals(decision.reason) && decision.target != null && decision.target.enabled;
+        return !retryPending && (verifiedAdvance || quantityAdvance || availableSelection || sameRoundReentry)
                 && decision.observedAtMs > 0 && age >= 0 && age < 3000
                 && decision.target != null && decision.target.hasBounds();
     }

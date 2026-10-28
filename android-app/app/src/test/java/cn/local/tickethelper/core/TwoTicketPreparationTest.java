@@ -92,4 +92,35 @@ public final class TwoTicketPreparationTest {
         assertEquals(Decision.Action.NONE, result.action);
         assertEquals("reservation_selection_only", result.reason);
     }
+
+    private UiItem plus(boolean enabled) { return new UiItem("",530,800,590,850,enabled,true,false,UiItem.Source.NODE,"cn.damai:id/img_jia"); }
+    @Test public void freshAdapterBoundPlusProposesOneIncreaseRatherThanConfirmOrClaimTwoTickets() {
+        UiItem plus=plus(true);List<UiItem> items=items(1,1680);items.add(plus);
+        var selection=new Observation.VerifiedSelection(now,"2026-10-31","19:00",1680,1,1680,confirm,plus);
+        Decision result=evaluate(items,selection);
+        assertEquals(Decision.State.PROBING,result.state);assertEquals(Decision.Action.INCREASE_QUANTITY,result.action);
+        assertSame(plus,result.target);assertSame(selection,result.selectionEvidence);
+    }
+    @Test public void missingDisabledOrDetachedIncreaseNodeDoesNotAuthorizeAPlus() {
+        for(boolean enabled:List.of(false,true)) {
+            UiItem plus=plus(enabled);List<UiItem> items=items(1,1680);if(!enabled)items.add(plus);
+            Decision result=evaluate(items,new Observation.VerifiedSelection(now,"2026-10-31","19:00",1680,1,1680,confirm,plus));
+            assertEquals(Decision.Action.NONE,result.action);
+        }
+    }
+    @Test public void contradictoryVisibleOneTicketAmountOrCountCannotBeOverruledForIncrease() {
+        UiItem plus=plus(true);
+        for(List<UiItem> items:List.of(items(2,1680),items(1,3360))) {
+            items.add(plus);Decision result=evaluate(items,new Observation.VerifiedSelection(now,"2026-10-31","19:00",1680,1,1680,confirm,plus));
+            assertEquals(Decision.Action.NONE,result.action);
+        }
+    }
+    @Test public void twoTicketsOrOversizedAmountNeverProposeAnotherIncrease() {
+        UiItem plus=plus(true);List<UiItem> items=items(2,3360);items.add(plus);
+        Decision result=evaluate(items,new Observation.VerifiedSelection(now,"2026-10-31","19:00",1680,2,3360,confirm,plus));
+        assertEquals(Decision.Action.CONFIRM_TIER,result.action);
+        assertSame(result.selectionEvidence.confirmTarget,confirm);
+        items=items(1,1681);items.add(plus);
+        assertEquals(Decision.Action.NONE,evaluate(items,new Observation.VerifiedSelection(now,"2026-10-31","19:00",1680,1,1681,confirm,plus)).action);
+    }
 }

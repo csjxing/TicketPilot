@@ -51,8 +51,9 @@ public final class CheckoutPageParser {
                 date = date(reader.value(Role.SESSION_DATE));
                 time = time(reader.value(Role.SESSION_TIME));
             }
-            long unit = money(reader.value(Role.UNIT_PRICE), false);
-            int quantity = integer(reader.value(Role.QUANTITY), 1, 100);
+            String[] ticketLine = profile.fields.containsKey(Role.UNIT_PRICE_QUANTITY) ? reader.priceQuantity() : null;
+            long unit = money(ticketLine == null ? reader.value(Role.UNIT_PRICE) : ticketLine[0], false);
+            int quantity = integer(ticketLine == null ? reader.value(Role.QUANTITY) : ticketLine[1], 1, 100);
             long subtotal = money(reader.value(Role.TICKET_SUBTOTAL), false);
             long payable = money(reader.value(Role.PAYABLE), false);
             if (Math.multiplyExact(unit, quantity) != subtotal || payable != subtotal)
@@ -225,7 +226,10 @@ public final class CheckoutPageParser {
                 if (markers.size() != 1) throw new ParseFailure(markers.isEmpty() ? Status.INCOMPLETE : Status.AMBIGUOUS,
                         "page_marker_unverified");
                 usable(markers.get(0));
-                if (!markers.get(0).item.text.equals(page.marker.exactLabel)) throw incomplete("page_marker_changed");
+                // Different checkout pages may share the same native root and title ID.
+                // Only the exact reviewed title claims this kind; another title cannot
+                // make a second profile appear to match the current page.
+                if (!markers.get(0).item.text.equals(page.marker.exactLabel)) continue;
                 if (match != null) throw new ParseFailure(Status.AMBIGUOUS, "mixed_checkout_pages");
                 match = new PageMatch(page.kind, root, markers.get(0));
             }
@@ -307,6 +311,16 @@ public final class CheckoutPageParser {
             return node;
         }
         String value(Role role) { return value(role, page); }
+        String[] priceQuantity() {
+            CheckoutProfile.Selector selector = selector(Role.UNIT_PRICE_QUANTITY);
+            if (selector.match != CheckoutProfile.Selector.Match.PRICE_QUANTITY)
+                throw incomplete("price_quantity_contract_unverified");
+            Matcher matcher = selector.extraction.matcher(one(Role.UNIT_PRICE_QUANTITY, page, true).item.text);
+            if (!matcher.matches() || matcher.group(1) == null || matcher.group(2) == null
+                    || matcher.group(1).trim().isEmpty() || matcher.group(2).trim().isEmpty())
+                throw incomplete("native_ticket_line_changed");
+            return new String[]{matcher.group(1).trim(), matcher.group(2).trim()};
+        }
         String value(Role role, CheckoutFrame.Node scope) {
             CheckoutProfile.Selector selector = selector(role);
             if (selector.match != CheckoutProfile.Selector.Match.VALUE) throw incomplete("value_role_not_explicit");
@@ -317,7 +331,8 @@ public final class CheckoutPageParser {
         }
         CheckoutFrame.Node exact(Role role) {
             CheckoutProfile.Selector selector = selector(role);
-            if (selector.match != CheckoutProfile.Selector.Match.EXACT || selector.exactLabel.isEmpty())
+            if ((selector.match != CheckoutProfile.Selector.Match.EXACT && selector.match != CheckoutProfile.Selector.Match.PUBLIC_LABEL)
+                    || selector.exactLabel.isEmpty())
                 throw incomplete("explicit_field_label_required");
             CheckoutFrame.Node node = one(role, page, true);
             if (!node.item.text.equals(selector.exactLabel)) throw incomplete("explicit_field_label_changed");

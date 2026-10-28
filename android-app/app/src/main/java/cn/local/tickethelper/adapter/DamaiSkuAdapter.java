@@ -24,15 +24,28 @@ public final class DamaiSkuAdapter {
 
     /** Coordinates are original screen pixels, not OCR-crop-relative coordinates. */
     public interface Pixels { int width(); int height(); int argb(int x, int y); }
+    /** Closed local diagnostic only; it contains no captured text, price or page identifiers. */
+    public enum TotalCheckCode {
+        NOT_CHECKED, BOTTOM_MISSING, AMOUNT_MISSING, CURRENCY_MISSING,
+        NATIVE_SHAPE_INVALID, NATIVE_AMOUNT_INVALID,
+        OCR_NO_OVERLAP, OCR_GEOMETRY_MISMATCH, OCR_NUMBER_MISSING,
+        OCR_NUMBER_INVALID, OCR_VALUE_MISMATCH, OCR_MULTIPLE_VALUES, VERIFIED
+    }
     public static final class Result {
         /** OCR items only; caller combines these with the original, same-frame node objects. */
         public final List<UiItem> items;
         public final Observation.VerifiedSelection evidence;
         /** Catalog-only identity evidence; it never changes the monitor's stricter stock/selection gate. */
         public final CatalogSelection catalogSelection;
+        public final TotalCheckCode totalCheckCode;
         Result(List<UiItem> items, Observation.VerifiedSelection evidence) { this(items, evidence, null); }
         Result(List<UiItem> items, Observation.VerifiedSelection evidence, CatalogSelection catalogSelection) {
+            this(items, evidence, catalogSelection, TotalCheckCode.NOT_CHECKED);
+        }
+        Result(List<UiItem> items, Observation.VerifiedSelection evidence, CatalogSelection catalogSelection,
+               TotalCheckCode totalCheckCode) {
             this.items = items; this.evidence = evidence; this.catalogSelection = catalogSelection;
+            this.totalCheckCode = totalCheckCode;
         }
     }
     private static final class Cell {
@@ -43,6 +56,59 @@ public final class DamaiSkuAdapter {
     }
 
     public static Result adapt(List<UiItem> nodes, List<UiItem> ocr, Pixels pixels, long observedAtMs) {
+        return adapt(nodes, ocr, null, pixels, observedAtMs);
+    }
+
+    /**
+     * Debug-local geometry only. This does not participate in evidence or action decisions.
+     * The caller must gate logging to a debug build with a selected price and unknown total.
+     * No input text or amount is copied into the returned fixed-field description.
+     */
+    public static String totalGeometryDiagnostic(List<UiItem> nodes, List<UiItem> elements, int screenWidth) {
+        UiItem bottom = unique(nodes, "bottom_layout");
+        UiItem amount = bottom == null ? null : uniqueInside(nodes, "tv_price", bottom);
+        UiItem currency = bottom == null ? null : uniqueInside(nodes, "tv_sku_price_prefix", bottom);
+        StringBuilder out = new StringBuilder("geometry amount=").append(diagnosticBox(amount))
+                .append(" currency=").append(diagnosticBox(currency));
+        if (amount == null || elements == null || screenWidth <= 0 || screenWidth > 20000) return out.toString();
+        Integer nativeValue = parseWholeAmount(amount.text);
+        List<UiItem> nearby = new ArrayList<>();
+        for (UiItem element : elements) {
+            if (element.source != UiItem.Source.OCR || !element.hasBounds()
+                    || element.left >= screenWidth / 2 || element.right > screenWidth) continue;
+            int overlap = Math.min(amount.bottom, element.bottom) - Math.max(amount.top, element.top);
+            if (overlap >= Math.min(amount.bottom - amount.top, element.bottom - element.top) / 2)
+                nearby.add(element);
+        }
+        nearby.sort(Comparator.comparingInt((UiItem item) -> item.left).thenComparingInt(item -> item.top));
+        for (int i = 0; i < Math.min(4, nearby.size()); i++) {
+            UiItem element = nearby.get(i);
+            Matcher full = Pattern.compile("^[¥￥]?\\s*(\\d{1,6}(?:\\.\\d{1,2})?)$").matcher(element.text.trim());
+            boolean fullNumber = full.matches();
+            Integer parsed = fullNumber ? parseWholeAmount(full.group(1)) : null;
+            boolean hasDigit = Pattern.compile("[0-9]").matcher(element.text).find();
+            String category = fullNumber ? "COMPLETE_NUMBER" : element.text.trim().matches("[¥￥]") ? "CURRENCY"
+                    : hasDigit ? "MIXED_NUMBER" : "OTHER";
+            out.append(" e").append(i).append('=').append(diagnosticBox(element))
+                    .append(" chars=").append(Math.min(64, element.text.codePointCount(0, element.text.length())))
+                    .append(" full=").append(fullNumber)
+                    .append(" equal=").append(parsed != null && parsed.equals(nativeValue))
+                    .append(" kind=").append(category);
+        }
+        return out.toString();
+    }
+
+    private static String diagnosticBox(UiItem item) {
+        return item == null ? "missing" : "[" + item.left + ',' + item.top + ',' + item.right + ',' + item.bottom + ']';
+    }
+
+    /**
+     * amountElements are separate word tokens from the same OCR result/frame. They are used only
+     * for native-scoped total verification and never added to semantic lines or returned items.
+     * Null retains the legacy line-only API; the live reader always supplies its token collection.
+     */
+    public static Result adapt(List<UiItem> nodes, List<UiItem> ocr, List<UiItem> amountElements,
+                               Pixels pixels, long observedAtMs) {
         List<UiItem> original = new ArrayList<>(ocr);
         List<UiItem> visible = new ArrayList<>(nodes); visible.addAll(ocr);
         if (PageFailureSignals.blocksSelection(visible)) return new Result(original, null);
@@ -64,10 +130,17 @@ public final class DamaiSkuAdapter {
         }
         UiItem sessionRegion = unique(nodes, "project_detail_perform_flowlayout");
         UiItem priceRegion = unique(nodes, "project_detail_perform_price_flowlayout");
-        if (sessionRegion == null || priceRegion == null || sessionRegion.bottom > priceRegion.top)
+        if (sessionRegion == null || (priceRegion != null && sessionRegion.bottom > priceRegion.top))
+            return new Result(original, null);
+        // A true session-only selector has no price cells. A price cell without its named scope
+        // remains a malformed/ambiguous page, rather than becoming new unscoped price authority.
+        if (priceRegion == null && nodes.stream().anyMatch(cell -> cell.source == UiItem.Source.NODE
+                && cell.resourceId.equals(ID + "ll_perform_item") && !encloses(sessionRegion, cell, 0)
+                && ocr.stream().anyMatch(line -> encloses(cell, line, 3) && parsePrice(line.text) != null)))
             return new Result(original, null);
         List<Cell> sessions = cells(nodes, ocr, pixels, sessionRegion, true);
-        List<Cell> prices = cells(nodes, ocr, pixels, priceRegion, false);
+        // The official selector initially contains only dates; prices appear after one is chosen.
+        List<Cell> prices = priceRegion == null ? new ArrayList<>() : cells(nodes, ocr, pixels, priceRegion, false);
         List<UiItem> adapted = new ArrayList<>(original);
         for (Cell cell : concat(sessions, prices)) {
             adapted.removeAll(cell.lines);
@@ -80,12 +153,20 @@ public final class DamaiSkuAdapter {
         String[] session = parseSession(selectedSession.text);
         if (session == null) return new Result(adapted, null);
         CatalogSelection catalogSelection = new CatalogSelection(observedAtMs, session[0], session[1]);
-        if (NEGATIVE.matcher(selectedSession.text).find()) return new Result(adapted, null, catalogSelection);
+        if (NEGATIVE.matcher(selectedSession.text).find()) {
+            // A selected date can remain visually selected while all its stock is unavailable.
+            // Preserve only its same-frame identity and negative signal, never purchase evidence.
+            return new Result(adapted, new Observation.VerifiedSelection(observedAtMs,
+                    session[0], session[1], null, null, null, null, null, true), catalogSelection);
+        }
+        if (priceRegion == null) return new Result(adapted, new Observation.VerifiedSelection(observedAtMs,
+                session[0], session[1], null, null, null, null), catalogSelection);
         Cell selectedPrice = onlySelected(prices);
         Integer price = selectedPrice == null || NEGATIVE.matcher(selectedPrice.text).find() ? null : parsePrice(selectedPrice.text);
         UiItem bottom = unique(nodes, "bottom_layout");
         Integer quantity = null, total = null;
-        UiItem confirm = null;
+        TotalCheckCode totalCheckCode = TotalCheckCode.BOTTOM_MISSING;
+        UiItem confirm = null, increase = null;
         if (bottom != null) {
             UiItem numberArea = uniqueInside(nodes, "layout_num", bottom);
             UiItem count = numberArea == null ? null : uniqueInside(nodes, "tv_num", numberArea);
@@ -94,18 +175,36 @@ public final class DamaiSkuAdapter {
                 Matcher match = Pattern.compile("^(\\d{1,3})\\s*张$").matcher(count.text.trim());
                 if (match.matches() && ocrQuantityAgrees(count, ocr)) quantity = Integer.parseInt(match.group(1));
             }
+            // Real historical native captures use this exact stepper: img_jian / tv_num / img_jia.
+            // The service retains these empty nodes only after checking their native class/parent path.
+            UiItem stepper = numberArea == null ? null : uniqueInside(nodes, "layout_sku_num_ll", numberArea);
+            UiItem plus = stepper == null ? null : uniqueInside(nodes, "img_jia", stepper);
+            UiItem minus = stepper == null ? null : uniqueInside(nodes, "img_jian", stepper);
+            if (quantity != null && quantity == 1 && count != null && stepper != null
+                    && encloses(stepper, count, 0) && plus != null && minus != null
+                    && plus.enabled && plus.clickable && plus.text.isEmpty() && minus.text.isEmpty()
+                    && !minus.enabled && minus.right <= count.left && count.right <= plus.left
+                    && Math.abs(plus.centerY() - count.centerY()) <= Math.max(plus.bottom - plus.top, count.bottom - count.top) / 2
+                    && Math.abs(minus.centerY() - count.centerY()) <= Math.max(minus.bottom - minus.top, count.bottom - count.top) / 2)
+                increase = plus;
             UiItem amount = uniqueInside(nodes, "tv_price", bottom);
             UiItem currency = uniqueInside(nodes, "tv_sku_price_prefix", bottom);
+            totalCheckCode = amount == null ? TotalCheckCode.AMOUNT_MISSING
+                    : currency == null ? TotalCheckCode.CURRENCY_MISSING : TotalCheckCode.NATIVE_SHAPE_INVALID;
             if (amount != null && currency != null && currency.text.matches("[¥￥]")
                     && currency.right <= amount.left + 4 && Math.abs(currency.centerY() - amount.centerY()) <= Math.max(10, amount.bottom - amount.top)) {
                 Integer value = parseWholeAmount(amount.text);
-                if (value != null && ocrTotalAgrees(amount, currency, ocr, value)) total = value;
+                totalCheckCode = value == null ? TotalCheckCode.NATIVE_AMOUNT_INVALID
+                        : amountElements == null ? ocrTotalCheck(amount, currency, ocr, value)
+                        : ocrAmountElementsCheck(amount, currency, amountElements, value);
+                if (totalCheckCode == TotalCheckCode.VERIFIED) total = value;
             }
             UiItem button = uniqueInside(nodes, "btn_buy_view", bottom);
             if (button != null && button.enabled && button.clickable && ocr.stream().anyMatch(line ->
                     line.text.trim().equals("确定") && encloses(button, line, 2))) confirm = button;
         }
-        return new Result(adapted, new Observation.VerifiedSelection(observedAtMs, session[0], session[1], price, quantity, total, confirm), catalogSelection);
+        if (price == null || quantity == null || quantity != 1 || total == null || !total.equals(price) || confirm == null) increase = null;
+        return new Result(adapted, new Observation.VerifiedSelection(observedAtMs, session[0], session[1], price, quantity, total, confirm, increase), catalogSelection, totalCheckCode);
     }
 
     private static List<Cell> cells(List<UiItem> nodes, List<UiItem> ocr, Pixels pixels, UiItem region, boolean sessions) {
@@ -136,19 +235,74 @@ public final class DamaiSkuAdapter {
         return false;
     }
 
-    private static boolean ocrTotalAgrees(UiItem amount, UiItem currency, List<UiItem> lines, int value) {
+    private static TotalCheckCode ocrTotalCheck(UiItem amount, UiItem currency, List<UiItem> lines, int value) {
         int height = amount.bottom - amount.top;
+        boolean overlapSeen = false, geometrySeen = false, numberSeen = false;
+        boolean invalidNumber = false, mismatch = false, multiple = false;
         for (UiItem line : lines) {
             int overlap = Math.min(amount.bottom, line.bottom) - Math.max(amount.top, line.top);
-            if (overlap < Math.min(height, line.bottom - line.top) / 2
-                    || line.left < currency.left - 8 || line.left > amount.left + height / 2
+            if (overlap < Math.min(height, line.bottom - line.top) / 2) continue;
+            overlapSeen = true;
+            if (line.left < currency.left - 8 || line.left > amount.left + height / 2
                     || line.right < amount.right - height / 2 || line.right > amount.right + height * 4) continue;
+            geometrySeen = true;
             Matcher digits = Pattern.compile("(?<![\\d.])(\\d{1,6}(?:\\.\\d{1,2})?)(?![\\d.])").matcher(line.text);
             if (!digits.find()) continue;
+            numberSeen = true;
             Integer seen = parseWholeAmount(digits.group(1));
-            if (seen != null && seen == value && !digits.find()) return true;
+            boolean extraNumber = digits.find();
+            if (seen != null && seen == value && !extraNumber) return TotalCheckCode.VERIFIED;
+            invalidNumber |= seen == null;
+            mismatch |= seen != null && seen != value;
+            multiple |= extraNumber;
         }
-        return false;
+        return !overlapSeen ? TotalCheckCode.OCR_NO_OVERLAP
+                : !geometrySeen ? TotalCheckCode.OCR_GEOMETRY_MISMATCH
+                : !numberSeen ? TotalCheckCode.OCR_NUMBER_MISSING
+                : multiple ? TotalCheckCode.OCR_MULTIPLE_VALUES
+                : invalidNumber ? TotalCheckCode.OCR_NUMBER_INVALID
+                : mismatch ? TotalCheckCode.OCR_VALUE_MISMATCH : TotalCheckCode.NOT_CHECKED;
+    }
+
+    private static TotalCheckCode ocrAmountElementsCheck(UiItem amount, UiItem currency,
+                                                         List<UiItem> elements, int value) {
+        int height = amount.bottom - amount.top;
+        List<UiItem> candidates = new ArrayList<>();
+        boolean overlapSeen = false, invalidGeometry = false, unexpectedText = false;
+        for (UiItem element : elements) {
+            if (element.source != UiItem.Source.OCR || !element.hasBounds()) continue;
+            int overlapY = Math.min(amount.bottom, element.bottom) - Math.max(amount.top, element.top);
+            int overlapX = Math.min(amount.right, element.right) - Math.max(amount.left, element.left);
+            if (overlapX <= 0 || overlapY < Math.min(height, element.bottom - element.top) / 2) continue;
+            overlapSeen = true;
+            if (element.text.trim().matches("[¥￥]")) continue;
+            // Only the currency/amount boxes, plus a small fixed OCR edge tolerance, belong here.
+            // A row spanning price details or the confirmation button is never an amount token.
+            if (element.left < currency.left - 6 || element.right > amount.right + 6
+                    || element.top < Math.min(amount.top, currency.top) - 6
+                    || element.bottom > Math.max(amount.bottom, currency.bottom) + 6) {
+                invalidGeometry = true; continue;
+            }
+            if (!Pattern.compile("[0-9]").matcher(element.text).find()) {
+                unexpectedText = true; continue;
+            }
+            candidates.add(element);
+        }
+        if (invalidGeometry) return TotalCheckCode.OCR_GEOMETRY_MISMATCH;
+        if (candidates.size() > 1) return TotalCheckCode.OCR_MULTIPLE_VALUES;
+        if (unexpectedText) return TotalCheckCode.OCR_NUMBER_INVALID;
+        if (candidates.isEmpty()) return overlapSeen ? TotalCheckCode.OCR_NUMBER_MISSING : TotalCheckCode.OCR_NO_OVERLAP;
+        UiItem token = candidates.get(0);
+        if (token.left > amount.left + height / 2 || token.right < amount.right - height / 2)
+            return TotalCheckCode.OCR_GEOMETRY_MISMATCH;
+        Matcher numbers = Pattern.compile("(?<![\\d.])(\\d{1,6}(?:\\.\\d{1,2})?)(?![\\d.])").matcher(token.text);
+        if (!numbers.find()) return TotalCheckCode.OCR_NUMBER_INVALID;
+        if (numbers.find()) return TotalCheckCode.OCR_MULTIPLE_VALUES;
+        Matcher whole = Pattern.compile("^[¥￥]?\\s*(\\d{1,6}(?:\\.\\d{1,2})?)$").matcher(token.text.trim());
+        if (!whole.matches()) return TotalCheckCode.OCR_NUMBER_INVALID;
+        Integer seen = parseWholeAmount(whole.group(1));
+        return seen == null ? TotalCheckCode.OCR_NUMBER_INVALID
+                : seen == value ? TotalCheckCode.VERIFIED : TotalCheckCode.OCR_VALUE_MISMATCH;
     }
 
     private static boolean orangeSemanticText(Pixels pixels, List<UiItem> lines, boolean session) {

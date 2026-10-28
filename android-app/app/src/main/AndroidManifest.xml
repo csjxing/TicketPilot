@@ -31,6 +31,7 @@
         <activity android:name=".TransferActivity" android:exported="false" />
         <activity android:name=".CloudActivity" android:exported="false" />
         <activity android:name=".RelayActivity" android:exported="false" />
+        <activity android:name=".TimingActivity" android:exported="false" />
         <provider android:name=".UpdateApkProvider" android:authorities="${applicationId}.updates"
             android:exported="false" android:grantUriPermissions="true" />
         <activity android:name=".ViewerSetupActivity" android:exported="false" />

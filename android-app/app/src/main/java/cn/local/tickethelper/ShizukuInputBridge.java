@@ -15,25 +15,36 @@ import android.os.SystemClock;
 import android.view.accessibility.AccessibilityNodeInfo;
 import cn.local.tickethelper.core.ShellTapPolicy;
 import cn.local.tickethelper.core.InputCancellationPolicy;
+import cn.local.tickethelper.core.InputDispatchPolicy.Rejection;
 import java.security.SecureRandom;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import rikka.shizuku.Shizuku;
 
 /** Explicit optional input transport. No implicit permission request, connection, retry or fallback. */
 public final class ShizukuInputBridge {
     public interface Callback { void onResult(Result result); }
     /** Read-only page/node validation; called once on main immediately before remote input. */
-    public interface DispatchGuard { boolean allow(); }
+    public interface DispatchGuard {
+        boolean allow();
+        /** Older guards remain fail-closed without exposing arbitrary strings. */
+        default Rejection rejection() { return Rejection.CALLER_GUARD_REJECTED; }
+    }
     public static final class Result {
         /** Success means command completion only, never inventory or order success. */
         public final boolean success, outcomeUnknown;
         public final String code;
+        public final Rejection guardRejection;
         Result(boolean success, boolean outcomeUnknown, String code) {
+            this(success, outcomeUnknown, code, Rejection.NONE);
+        }
+        Result(boolean success, boolean outcomeUnknown, String code, Rejection guardRejection) {
             this.success = success; this.outcomeUnknown = outcomeUnknown; this.code = code;
+            this.guardRejection = guardRejection == null ? Rejection.REMOTE_GUARD_REJECTED : guardRejection;
         }
     }
     private static ShizukuInputBridge singleton;
@@ -138,7 +149,7 @@ public final class ShizukuInputBridge {
             // A fresh tag prevents a delayed unbind of an old session from killing a new session.
             args = new Shizuku.UserServiceArgs(new ComponentName(context, ShellTapUserService.class))
                     .daemon(false).tag("ticket-tap-" + token).processNameSuffix("ticket_input")
-                    .version(1).debuggable(false);
+                    .version(2).debuggable(false);
             connection = new ServiceConnection() {
                 @Override public void onServiceConnected(ComponentName name, IBinder service) {
                     if (binding != Binding.this || !service.pingBinder()) { remove(Binding.this); return; }
@@ -248,8 +259,27 @@ public final class ShizukuInputBridge {
 
     private void tapInternal(int x, int y, long deadlineElapsedRealtime, DispatchGuard guard,
                              Callback callback, boolean catalog, boolean order) {
+        inputInternal(x, y, deadlineElapsedRealtime, guard, callback, catalog, order, null);
+    }
+
+    /** One fixed relative detail scroll. Caller must consume its BACK-derived one-shot permit. */
+    public void scrollDetailUp(int left, int top, int right, int bottom, long deadlineElapsedRealtime,
+                               DispatchGuard guard, Callback callback) {
+        inputInternal(0, 0, deadlineElapsedRealtime, guard, callback, false, false,
+                new DetailFrame(left, top, right, bottom));
+    }
+
+    private static final class DetailFrame {
+        final int left, top, right, bottom;
+        DetailFrame(int left, int top, int right, int bottom) {
+            this.left = left; this.top = top; this.right = right; this.bottom = bottom;
+        }
+    }
+
+    private void inputInternal(int x, int y, long deadlineElapsedRealtime, DispatchGuard guard,
+                              Callback callback, boolean catalog, boolean order, DetailFrame scrollFrame) {
         if (Looper.myLooper() != Looper.getMainLooper()) {
-            main.post(() -> tapInternal(x, y, deadlineElapsedRealtime, guard, callback, catalog, order)); return;
+            main.post(() -> inputInternal(x, y, deadlineElapsedRealtime, guard, callback, catalog, order, scrollFrame)); return;
         }
         if (guard == null) { reply(callback, failure("dispatch_guard_required")); return; }
         long now = SystemClock.elapsedRealtime();
@@ -261,34 +291,39 @@ public final class ShizukuInputBridge {
         if (!clientScreenSafe(catalog)) { reply(callback, failure("foreground_or_screen_unverified")); return; }
         final Binding current = binding;
         final Pending work = new Pending(generation, callback); pending = work;
+        final AtomicReference<Rejection> rejection = new AtomicReference<>(Rejection.NONE);
         final IDispatchGuard remoteGuard = new IDispatchGuard.Stub() {
             private final AtomicBoolean used = new AtomicBoolean();
             @Override public boolean allow() {
-                if (Binder.getCallingUid() != 2000 || !used.compareAndSet(false, true)) return false;
+                if (Binder.getCallingUid() != 2000) return reject(rejection, Rejection.CALLER_UID_INVALID);
+                if (!used.compareAndSet(false, true)) return reject(rejection, Rejection.GUARD_ALREADY_USED);
                 long remaining = deadlineElapsedRealtime - SystemClock.elapsedRealtime();
-                if (remaining <= 0) return false;
+                if (remaining <= 0) return reject(rejection, Rejection.DEADLINE_EXPIRED);
                 final CountDownLatch done = new CountDownLatch(1);
                 final AtomicBoolean active = new AtomicBoolean(true);
                 final AtomicBoolean allowed = new AtomicBoolean();
                 main.post(() -> {
                     try {
-                        if (active.get() && binding == current && generation == work.revision
-                                && pending == work && !work.delivered.get() && isReady()
-                                && SystemClock.elapsedRealtime() < deadlineElapsedRealtime
-                                && clientScreenSafe(catalog)) {
-                            allowed.set(guard.allow());
-                        }
-                    } catch (RuntimeException ignored) { allowed.set(false); }
+                        if (!active.get()) { reject(rejection, Rejection.MAIN_GUARD_TIMEOUT); return; }
+                        Rejection invalid = bridgeGuardRejection(current, work, deadlineElapsedRealtime, catalog, true);
+                        if (invalid != Rejection.NONE) { reject(rejection, invalid); return; }
+                        allowed.set(guard.allow());
+                        if (!allowed.get()) reject(rejection, guard.rejection() == null || guard.rejection() == Rejection.NONE
+                                ? Rejection.CALLER_GUARD_REJECTED : guard.rejection());
+                    } catch (RuntimeException ignored) {
+                        allowed.set(false); reject(rejection, Rejection.CALLER_GUARD_EXCEPTION);
+                    }
                     finally { done.countDown(); }
                 });
                 try {
                     // Native catalog and checkout re-reads remain bounded by the same input deadline.
-                    if (!done.await(Math.min(catalog || order ? 600 : 200, remaining), TimeUnit.MILLISECONDS)) return false;
-                    return allowed.get() && binding == current && generation == work.revision
-                            && pending == work && !work.delivered.get()
-                            && SystemClock.elapsedRealtime() < deadlineElapsedRealtime;
+                    if (!done.await(Math.min(catalog || order ? 600 : 200, remaining), TimeUnit.MILLISECONDS))
+                        return reject(rejection, Rejection.MAIN_GUARD_TIMEOUT);
+                    if (!allowed.get()) return false;
+                    Rejection invalid = bridgeGuardRejection(current, work, deadlineElapsedRealtime, catalog, false);
+                    return invalid == Rejection.NONE || reject(rejection, invalid);
                 } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt(); return false;
+                    Thread.currentThread().interrupt(); return reject(rejection, Rejection.MAIN_GUARD_INTERRUPTED);
                 } finally { active.set(false); }
             }
         };
@@ -298,11 +333,17 @@ public final class ShizukuInputBridge {
             String code;
             try {
                 work.sent = true;
-                code = current.remote.tap(current.token, work.revision, x, y, deadlineElapsedRealtime, remoteGuard);
+                code = scrollFrame == null
+                        ? current.remote.tap(current.token, work.revision, x, y, deadlineElapsedRealtime, remoteGuard)
+                        : current.remote.scrollDetailUp(current.token, work.revision, scrollFrame.left, scrollFrame.top,
+                            scrollFrame.right, scrollFrame.bottom, deadlineElapsedRealtime, remoteGuard);
             } catch (Exception e) { code = "binder_failed_outcome_unknown"; }
             boolean success = "command_completed".equals(code);
             boolean unknown = code == null || code.endsWith("outcome_unknown");
-            complete(work, new Result(success, unknown, code == null ? "empty_result_outcome_unknown" : code));
+            Rejection reason = "dispatch_guard_rejected".equals(code)
+                    ? rejection.get() == Rejection.NONE ? Rejection.REMOTE_GUARD_REJECTED : rejection.get()
+                    : Rejection.NONE;
+            complete(work, new Result(success, unknown, code == null ? "empty_result_outcome_unknown" : code, reason));
         });
         main.postDelayed(() -> {
             if (pending == work && !work.delivered.get()) {
@@ -310,6 +351,22 @@ public final class ShizukuInputBridge {
                 disconnect();
             }
         }, Math.min(ShellTapPolicy.MAX_EXECUTION_MS + 200, deadlineElapsedRealtime - now + 200));
+    }
+
+    private static boolean reject(AtomicReference<Rejection> rejection, Rejection reason) {
+        rejection.compareAndSet(Rejection.NONE, reason); return false;
+    }
+
+    private Rejection bridgeGuardRejection(Binding current, Pending work, long deadline,
+                                           boolean catalog, boolean screenCheck) {
+        if (binding != current) return Rejection.BRIDGE_BINDING_CHANGED;
+        if (generation != work.revision) return Rejection.BRIDGE_GENERATION_CHANGED;
+        if (pending != work) return Rejection.BRIDGE_PENDING_CHANGED;
+        if (work.delivered.get()) return Rejection.BRIDGE_RESULT_DELIVERED;
+        if (SystemClock.elapsedRealtime() >= deadline) return Rejection.DEADLINE_EXPIRED;
+        if (screenCheck && !isReady()) return Rejection.BRIDGE_NOT_READY;
+        if (screenCheck && !clientScreenSafe(catalog)) return Rejection.BRIDGE_SCREEN_UNVERIFIED;
+        return Rejection.NONE;
     }
 
     private boolean clientScreenSafe(boolean catalog) {

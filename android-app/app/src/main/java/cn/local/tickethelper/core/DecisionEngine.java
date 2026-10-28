@@ -4,6 +4,8 @@ import java.time.Instant;
 import java.time.Clock;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import cn.local.tickethelper.catalog.CatalogParser;
+import cn.local.tickethelper.catalog.CatalogProject;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -20,29 +22,92 @@ public final class DecisionEngine {
     private String pendingFingerprint = "", contextFingerprint = "";
     private Decision lastDecision;
     private long contextUntilMs, observedAtMs;
+    private static final long RETURN_CONTEXT_MS = 30_000;
+    private String pendingReturnFingerprint = "", returnFingerprint = "";
+    private CatalogProject pendingReturnProject, returnProject;
+    private long returnFromMs, returnUntilMs;
+    private boolean pendingReentry;
+    private boolean detailScrollAvailable;
+    private Decision pendingDetailScroll, consumedDetailScroll;
 
     public DecisionEngine() { this(Clock.systemUTC()); }
     public DecisionEngine(Clock clock) { this.clock = clock == null ? Clock.systemUTC() : clock; }
 
     public synchronized void reset() {
         pendingFingerprint = ""; contextFingerprint = ""; contextUntilMs = 0; lastDecision = null;
+        pendingReturnFingerprint = ""; pendingReturnProject = null; pendingReentry = false; clearReturnContext();
     }
 
-    /** Call only after the proposed OPEN_TICKETS gesture was actually dispatched. */
+    /** Call only after the proposed normal navigation/input was actually dispatched. */
     public synchronized void recordAction(Decision decision, long timestampMs) {
         if (decision == lastDecision && decision.action == Decision.Action.OPEN_TICKETS && !pendingFingerprint.isEmpty()) {
-            contextFingerprint = pendingFingerprint;
-            contextUntilMs = timestampMs + 120_000;
+            // A return permit opens only this selector; it cannot authorize subsequent SKU facts.
+            if (!pendingReentry) {
+                contextFingerprint = pendingFingerprint;
+                contextUntilMs = timestampMs + 120_000;
+            }
+            clearReturnContext();
         }
         if (decision != null && decision.action == Decision.Action.BACK) {
             contextFingerprint = ""; contextUntilMs = 0;
+            clearReturnContext();
+            if (decision == lastDecision && decision.state == Decision.State.OUT_OF_STOCK
+                    && pendingReturnProject != null && !pendingReturnFingerprint.isEmpty()) {
+                returnFingerprint = pendingReturnFingerprint; returnProject = pendingReturnProject;
+                returnFromMs = timestampMs; returnUntilMs = timestampMs + RETURN_CONTEXT_MS;
+                detailScrollAvailable = true;
+            }
         }
     }
 
+    /**
+     * A one-purpose read of a complete public detail identity. The caller separately validates
+     * content-only page rebasing; none of this OCR is accepted as click, stock or order evidence.
+     */
+    public synchronized Decision prepareDetailScroll(MonitorConfig c, Observation o) {
+        if (!returnPermitCurrent(c) || !detailScrollAvailable || o == null || !"cn.damai".equals(o.packageName)
+                || o.timestampMs < returnFromMs || clock.millis() - o.timestampMs < 0
+                || clock.millis() - o.timestampMs >= 3000 || o.verifiedSelection != null
+                || DetailScrollPolicy.unsafePage(o.items)) return null;
+        String all = join(o.items);
+        if (BLOCK.matcher(all).find() || !titleMatches(c, o.items) || !hasDate(c, all, o.timestampMs)
+                || !CatalogParser.sameProject(returnProject, CatalogParser.projectFromPage(o.items, c.eventKeyword))) return null;
+        pendingDetailScroll = new Decision(Decision.State.READY, Decision.Action.SCROLL_DETAIL, null,
+                "verified_return_detail_settle", o.timestampMs);
+        return pendingDetailScroll;
+    }
+
+    public synchronized boolean consumeDetailScroll(Decision decision, MonitorConfig c) {
+        if (decision == null || decision != pendingDetailScroll || !detailScrollAvailable
+                || !returnPermitCurrent(c) || clock.millis() - decision.observedAtMs < 0
+                || clock.millis() - decision.observedAtMs >= 3000) return false;
+        detailScrollAvailable = false; consumedDetailScroll = decision; pendingDetailScroll = null;
+        return true;
+    }
+
+    /** Does not mint/renew a permit or observation, and cannot authorize any other action. */
+    public synchronized boolean detailScrollCurrent(Decision decision, MonitorConfig c) {
+        return decision != null && decision == consumedDetailScroll && decision.action == Decision.Action.SCROLL_DETAIL
+                && returnPermitCurrent(c) && clock.millis() - decision.observedAtMs >= 0
+                && clock.millis() - decision.observedAtMs < 3000;
+    }
+
+    public synchronized void finishDetailScroll(Decision decision) {
+        if (decision == consumedDetailScroll) consumedDetailScroll = null;
+    }
+
+    private boolean returnPermitCurrent(MonitorConfig c) {
+        return c != null && c.validate().isEmpty() && fingerprint(c).equals(returnFingerprint)
+                && returnProject != null && clock.millis() >= returnFromMs && clock.millis() <= returnUntilMs
+                && clock.millis() < c.deadline.toEpochMilli();
+    }
+
     public synchronized Decision evaluate(MonitorConfig c, Observation o, long lastNavigationMs) {
-        pendingFingerprint = "";
+        pendingFingerprint = ""; pendingReturnFingerprint = ""; pendingReturnProject = null; pendingReentry = false;
         observedAtMs = o == null ? 0 : o.timestampMs;
-        if (c == null || !c.validate().isEmpty()) return result(Decision.State.CONFIG_INVALID, "invalid_configuration");
+        if (c == null || !c.validate().isEmpty()) {
+            clearReturnContext(); return result(Decision.State.CONFIG_INVALID, "invalid_configuration");
+        }
         if (o == null || o.timestampMs <= 0) return result(Decision.State.UNKNOWN, "missing_observation");
         long currentMs = clock.millis();
         if (Math.max(currentMs, o.timestampMs) >= c.deadline.toEpochMilli()) { reset(); return result(Decision.State.EXPIRED, "deadline_reached"); }
@@ -76,6 +141,7 @@ public final class DecisionEngine {
                 || !c.date.equals(verified.date) || !c.time.equals(verified.time)))
             return result(Decision.State.UNKNOWN, "adapter_session_evidence_mismatch");
         String fingerprint = fingerprint(c);
+        if (!fingerprint.equals(returnFingerprint) || currentMs > returnUntilMs) clearReturnContext();
         boolean titleMatches = titleMatches(c, o.items);
         boolean dateMatches = hasDate(c, all, o.timestampMs);
         boolean timeMatches = all.contains(c.time);
@@ -83,7 +149,7 @@ public final class DecisionEngine {
         List<Candidate> allCandidates = candidates(o.items);
         List<Candidate> candidates = new ArrayList<>();
         for (Candidate candidate : allCandidates) if (c.prices.contains(candidate.price)) candidates.add(candidate);
-        boolean sku = contains(all, "票档", "选择票价", "选择票档") ||
+        boolean sku = uniqueRegion(o.items, "project_detail_perform_flowlayout") != null || contains(all, "票档", "选择票价", "选择票档") ||
                 (!candidates.isEmpty() && contains(all, "购买数量", "数量") && exactButton(o.items, "确定") != null);
         if (!sku) { contextFingerprint = ""; contextUntilMs = 0; }
         if (sku && o.items.stream().anyMatch(i -> contains(i.text, "演唱会", "音乐节", "演出名称")
@@ -92,15 +158,50 @@ public final class DecisionEngine {
         }
         boolean inheritedScope = sku && dateMatches && timeMatches && fingerprint.equals(contextFingerprint)
                 && o.timestampMs <= contextUntilMs;
-        if (!scopeVisible && !inheritedScope) return result(Decision.State.UNKNOWN, "event_city_date_time_not_verified");
+        boolean returnScope = !sku && titleMatches && dateMatches
+                && (timeMatches || !Pattern.compile("(?<!\\d)[0-2]\\d:[0-5]\\d(?!\\d)").matcher(all).find())
+                && fingerprint.equals(returnFingerprint) && returnProject != null
+                && o.timestampMs >= returnFromMs && currentMs >= returnFromMs && o.timestampMs <= returnUntilMs
+                && CatalogParser.sameProject(returnProject, CatalogParser.projectFromPage(o.items, c.eventKeyword));
+        if (!scopeVisible && !inheritedScope && !returnScope) {
+            // Native observation precedes OCR. Missing text must not destroy a still-live permit
+            // before that same frame is fully read; an actual contradictory project/time does.
+            CatalogProject currentProject = !sku && returnProject != null
+                    ? CatalogParser.projectFromPage(o.items, c.eventKeyword) : null;
+            if (currentProject != null && !CatalogParser.sameProject(returnProject, currentProject)) clearReturnContext();
+            else if (!sku && titleMatches && dateMatches && !timeMatches
+                    && Pattern.compile("(?<!\\d)[0-2]\\d:[0-5]\\d(?!\\d)").matcher(all).find()) clearReturnContext();
+            return result(Decision.State.UNKNOWN, "event_city_date_time_not_verified");
+        }
         if (!sku) {
             UiItem opener = exactButton(o.items, "立即购买", "立即预订", "选座购买", "缺货登记", "购买");
+            if (returnScope && opener != null && "缺货登记".equals(opener.text.trim()))
+                opener = DetailOcrNavigation.uniqueEntry(o.items);
             if (opener == null) return result(Decision.State.UNKNOWN, "ticket_entry_not_verified");
-            if (!intervalDue(c, o, lastNavigationMs)) return result(Decision.State.READY, "waiting_for_interval");
+            // BACK and re-entry form one refresh round. The user interval gates the next BACK,
+            // while this one-time, identity-bound re-entry only waits for normal page settling.
+            if (returnScope ? o.timestampMs - returnFromMs < 500 : !intervalDue(c, o, lastNavigationMs))
+                return result(Decision.State.READY, "waiting_for_interval");
             pendingFingerprint = fingerprint;
-            return result(Decision.State.READY, Decision.Action.OPEN_TICKETS, opener, "verified_detail_entry");
+            pendingReentry = returnScope;
+            return result(Decision.State.READY, Decision.Action.OPEN_TICKETS, opener,
+                    returnScope ? "verified_return_detail_entry" : "verified_detail_entry");
+        }
+        if (verified == null) {
+            UiItem sessionTarget = sessionSelectionTarget(c, o.items);
+            if (sessionTarget != null && c.canPreparePurchase())
+                return result(Decision.State.PROBING, Decision.Action.SELECT_SESSION, sessionTarget,
+                        "target_session_cell_verified");
         }
         if (!dateSelectionVerified(c, o)) return result(Decision.State.UNKNOWN, "selected_session_not_verified");
+        if (verified != null && verified.sessionUnavailable) {
+            // Session-scoped negative evidence precedes every tier input, including contradictory
+            // positive price labels. It permits only a paced return for another normal observation.
+            captureReturnProject(c, o, fingerprint);
+            return result(Decision.State.OUT_OF_STOCK,
+                    intervalDue(c, o, lastNavigationMs) ? Decision.Action.BACK : Decision.Action.NONE,
+                    null, "selected_session_explicitly_unavailable", verified);
+        }
         if (candidates.isEmpty()) return result(Decision.State.UNKNOWN, "target_prices_not_readable");
 
         if (verified != null && verified.selectedPrice != null) {
@@ -110,17 +211,27 @@ public final class DecisionEngine {
             if (matching.size() != 1 || contraryNativeSelection || matching.get(0).negative || !matching.get(0).item.enabled)
                 return result(Decision.State.UNKNOWN, "adapter_price_selection_not_verified");
             long expected = (long) verified.selectedPrice * c.quantity;
+            if (c.quantity == 2 && verified.quantity != null && verified.quantity == 1
+                    && verified.totalYuan != null && verified.totalYuan.equals(verified.selectedPrice)
+                    && expected <= c.maxTotal && c.canPreparePurchase()
+                    && (!Pattern.compile("(?:购买数量|数量|已选)\\s*[:：]?\\s*\\d").matcher(all).find() || quantityVerified(1, all))
+                    && (!Pattern.compile("(?:合计|总计|票款|应付)\\s*[:：]?\\s*[¥￥]?\\s*\\d").matcher(all).find()
+                        || totalVerified(1, c.maxTotal, verified.selectedPrice, all))
+                    && verifiedIncreasePresent(o, verified.quantityIncreaseTarget)
+                    && verifiedConfirmPresent(o, verified.confirmTarget))
+                return result(Decision.State.PROBING, Decision.Action.INCREASE_QUANTITY,
+                        verified.quantityIncreaseTarget, "adapter_one_ticket_needs_verified_increase", verified);
             if (verified.quantity == null || verified.quantity != c.quantity || verified.totalYuan == null
                     || verified.totalYuan != expected || expected > c.maxTotal
                     || (Pattern.compile("(?:购买数量|数量|已选)\\s*[:：]?\\s*\\d").matcher(all).find() && !quantityVerified(c, all))
                     || (Pattern.compile("(?:合计|总计|票款|应付)\\s*[:：]?\\s*[¥￥]?\\s*\\d").matcher(all).find()
                         && !totalVerified(c, verified.selectedPrice, all)))
-                return result(Decision.State.UNKNOWN, "adapter_quantity_or_total_not_verified");
+                return result(Decision.State.UNKNOWN, Decision.Action.NONE, null, "adapter_quantity_or_total_not_verified", verified);
             UiItem confirm = verified.confirmTarget;
             if (!verifiedConfirmPresent(o, confirm))
                 return result(Decision.State.UNKNOWN, "adapter_confirm_button_not_verified");
             if (c.canPreparePurchase())
-                return result(Decision.State.TIER_SELECTED, Decision.Action.CONFIRM_TIER, confirm, "adapter_selected_price_quantity_total_verified");
+                return result(Decision.State.TIER_SELECTED, Decision.Action.CONFIRM_TIER, confirm, "adapter_selected_price_quantity_total_verified", verified);
             return result(Decision.State.IN_STOCK, "adapter_selected_price_quantity_total_verified");
         }
 
@@ -142,20 +253,21 @@ public final class DecisionEngine {
                 Candidate candidate = matching.get(0);
                 if (candidate.positive && !candidate.negative && candidate.item.enabled && candidate.item.hasBounds()) {
                     if (c.canPreparePurchase() && !candidate.item.selected)
-                        return result(Decision.State.IN_STOCK, Decision.Action.SELECT_TIER, candidate.item, "explicit_available_label");
-                    return result(Decision.State.IN_STOCK, "explicit_available_label");
+                        return result(Decision.State.IN_STOCK, Decision.Action.SELECT_TIER, candidate.item, "explicit_available_label", verified);
+                    return result(Decision.State.IN_STOCK, Decision.Action.NONE, null, "explicit_available_label", verified);
                 }
             }
         }
         // A bounded ordinary trial selection is a check, never an inventory signal.
         // It is allowed only after the adapter positively verified this frame's selected session.
-        if (verified != null && c.canPreparePurchase() && verified.selectedPrice == null) {
+        if (verified != null && c.canPreparePurchase() && verified.selectedPrice == null
+                && uniqueRegion(o.items, "project_detail_perform_price_flowlayout") != null) {
             for (int price : c.prices) {
                 List<Candidate> matching = byPrice(candidates, price);
                 if (matching.size() == 1) {
                     Candidate candidate = matching.get(0);
                     if (!candidate.negative && candidate.item.enabled && candidate.item.hasBounds())
-                        return result(Decision.State.PROBING, Decision.Action.PROBE_TIER, candidate.item, "trial_selection_inventory_unknown");
+                        return result(Decision.State.PROBING, Decision.Action.PROBE_TIER, candidate.item, "trial_selection_inventory_unknown", verified);
                 }
             }
         }
@@ -165,16 +277,82 @@ public final class DecisionEngine {
             if (matching.isEmpty() || matching.stream().anyMatch(x -> !x.negative)) allUnavailable = false;
         }
         if (allUnavailable) {
+            captureReturnProject(c, o, fingerprint);
             if (intervalDue(c, o, lastNavigationMs))
-                return result(Decision.State.OUT_OF_STOCK, Decision.Action.BACK, null, "all_target_tiers_explicitly_unavailable");
-            return result(Decision.State.OUT_OF_STOCK, "all_target_tiers_explicitly_unavailable");
+                return result(Decision.State.OUT_OF_STOCK, Decision.Action.BACK, null, "all_target_tiers_explicitly_unavailable", verified);
+            return result(Decision.State.OUT_OF_STOCK, Decision.Action.NONE, null, "all_target_tiers_explicitly_unavailable", verified);
         }
-        return result(Decision.State.UNKNOWN, "inventory_or_selection_ambiguous");
+        return result(Decision.State.UNKNOWN, Decision.Action.NONE, null, "inventory_or_selection_ambiguous", verified);
+    }
+
+    private void clearReturnContext() {
+        returnFingerprint = ""; returnProject = null; returnFromMs = 0; returnUntilMs = 0;
+        detailScrollAvailable = false; pendingDetailScroll = null; consumedDetailScroll = null;
+    }
+
+    private void captureReturnProject(MonitorConfig c, Observation o, String fingerprint) {
+        CatalogProject project = CatalogParser.projectFromPage(o.items, c.eventKeyword);
+        if (project != null && c.city.equals(project.city)) {
+            pendingReturnFingerprint = fingerprint; pendingReturnProject = project;
+        }
+    }
+
+    private static UiItem uniqueRegion(List<UiItem> items, String id) {
+        UiItem found = null;
+        for (UiItem item : items) if (item.source == UiItem.Source.NODE && item.hasBounds()
+                && item.resourceId.equals("cn.damai:id/" + id)) {
+            if (found != null) return null; found = item;
+        }
+        return found;
+    }
+
+    /** Only the adapter's complete, native-cell-scoped OCR label can propose date selection. */
+    private static UiItem sessionSelectionTarget(MonitorConfig c, List<UiItem> items) {
+        UiItem region = uniqueRegion(items, "project_detail_perform_flowlayout");
+        if (region == null || !region.enabled) return null;
+        Pattern date = Pattern.compile("(?<!\\d)(20\\d{2})[年./-](\\d{1,2})[月./-](\\d{1,2})(?:日)?(?!\\d)");
+        Pattern time = Pattern.compile("(?<!\\d)([0-2]\\d:[0-5]\\d)(?!\\d)");
+        if (items.stream().anyMatch(item -> item.source == UiItem.Source.NODE && item.selected
+                && encloses(region, item) && date.matcher(item.text).find())) return null;
+        List<UiItem> cells = new ArrayList<>();
+        for (UiItem item : items) if (item.source == UiItem.Source.NODE
+                && item.resourceId.equals("cn.damai:id/ll_perform_item") && encloses(region, item)) {
+            if (item.selected) return null;
+            cells.add(item);
+        }
+        UiItem target = null;
+        for (UiItem cell : cells) {
+            if (!cell.enabled) continue;
+            for (UiItem label : items) {
+                if (label.source != UiItem.Source.OCR || !label.hasBounds() || !label.enabled
+                        || cell.left != label.left || cell.top != label.top || cell.right != label.right || cell.bottom != label.bottom) continue;
+                Matcher dates = date.matcher(label.text), times = time.matcher(label.text);
+                if (!dates.find() || !times.find()) continue;
+                String selectedDate;
+                try { selectedDate = LocalDate.of(Integer.parseInt(dates.group(1)),
+                        Integer.parseInt(dates.group(2)), Integer.parseInt(dates.group(3))).toString(); }
+                catch (RuntimeException invalid) { continue; }
+                String selectedTime = times.group(1);
+                if (dates.find() || times.find() || !c.date.equals(selectedDate) || !c.time.equals(selectedTime)) continue;
+                if (target != null) return null;
+                target = label;
+            }
+        }
+        return target;
     }
 
     private Decision result(Decision.State state, String reason) { return result(state, Decision.Action.NONE, null, reason); }
     private Decision result(Decision.State state, Decision.Action action, UiItem target, String reason) {
         lastDecision = new Decision(state, action, target, reason, observedAtMs); return lastDecision;
+    }
+    private Decision result(Decision.State state, Decision.Action action, UiItem target, String reason,
+                            Observation.VerifiedSelection evidence) {
+        lastDecision = new Decision(state, action, target, reason, observedAtMs, evidence); return lastDecision;
+    }
+    private static boolean verifiedIncreasePresent(Observation observation, UiItem plus) {
+        return plus != null && plus.source == UiItem.Source.NODE && plus.resourceId.equals("cn.damai:id/img_jia")
+                && plus.hasBounds() && plus.enabled && plus.clickable && plus.text.isEmpty()
+                && observation.items.stream().anyMatch(item -> item == plus);
     }
     private static boolean intervalDue(MonitorConfig c, Observation o, long last) { return last <= 0 || o.timestampMs - last >= c.minIntervalMs; }
     private static String fingerprint(MonitorConfig c) { return c.eventKeyword + "|" + c.city + "|" + c.date + "|" + c.time + "|" + c.prices + "|" + c.quantity + "|" + c.maxTotal; }
@@ -344,16 +522,22 @@ public final class DecisionEngine {
         return selected;
     }
     private static boolean quantityVerified(MonitorConfig c, String all) {
+        return quantityVerified(c.quantity, all);
+    }
+    private static boolean quantityVerified(int quantity, String all) {
         Pattern p = Pattern.compile("(?:购买数量|数量|已选)\\s*[:：]?\\s*(\\d{1,3})(?![\\d.])\\s*(?:张)?");
         Matcher m = p.matcher(all); boolean found = false;
-        while (m.find()) { if (Integer.parseInt(m.group(1)) != c.quantity) return false; found = true; }
+        while (m.find()) { if (Integer.parseInt(m.group(1)) != quantity) return false; found = true; }
         return found;
     }
     private static boolean totalVerified(MonitorConfig c, int price, String all) {
+        return totalVerified(c.quantity, c.maxTotal, price, all);
+    }
+    private static boolean totalVerified(int quantity, int maxTotal, int price, String all) {
         Pattern p = Pattern.compile("(?:合计|总计|票款|应付)\\s*[:：]?\\s*[¥￥]?\\s*(\\d{1,9})(?:\\.(\\d{1,2}))?(?![\\d.])\\s*元?");
         Matcher m = p.matcher(all); boolean found = false;
-        long expected = (long) price * c.quantity;
-        if (expected > c.maxTotal) return false;
+        long expected = (long) price * quantity;
+        if (expected > maxTotal) return false;
         while (m.find()) {
             if (Long.parseLong(m.group(1)) != expected || (m.group(2) != null && Integer.parseInt(m.group(2)) != 0)) return false;
             found = true;

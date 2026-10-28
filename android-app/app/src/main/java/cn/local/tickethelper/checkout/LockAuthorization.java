@@ -32,10 +32,16 @@ public final class LockAuthorization {
     }
     public static String configFingerprint(MonitorConfig config) {
         if (config == null) return "";
-        return CheckoutIdentity.hash(CheckoutIdentity.part(config.eventKeyword) + CheckoutIdentity.part(config.city)
+        String facts = CheckoutIdentity.part(config.eventKeyword) + CheckoutIdentity.part(config.city)
                 + CheckoutIdentity.part(config.date) + CheckoutIdentity.part(config.time) + CheckoutIdentity.part(config.prices.toString())
                 + "|" + config.quantity + "|" + config.maxTotal + "|" + config.deadline + "|"
-                + config.minIntervalMs + "|" + config.maxIntervalMs + "|" + config.mode);
+                + config.minIntervalMs + "|" + config.maxIntervalMs + "|" + config.mode;
+        // Preserve the legacy digest for its exact null/zero semantics, including durable records.
+        // Any actual opening/window setting becomes part of this precise one-configuration grant.
+        if (config.saleAt != null || config.followUpMinutes != 0)
+            facts += "|saleAt=" + (config.saleAt == null ? "" : config.saleAt.toString())
+                    + "|followUpMinutes=" + config.followUpMinutes;
+        return CheckoutIdentity.hash(facts);
     }
     /** Exact visible name and user-specified suffix; masked-name guesses are not supported. */
     public static String viewerBindingHash(String displayName, String documentSuffix) {

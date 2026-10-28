@@ -98,6 +98,71 @@ public class CheckoutPageParserTest {
         assertEquals(CheckoutObservation.Kind.UNKNOWN, result.observation.kind);
     }
 
+    @Test public void combinedNativeTicketLineUsesIndependentPriceAndQuantityCaptures() {
+        Fixture f = new Fixture(false);
+        f.combinedTicketLine("980元 × 1张");
+        CheckoutParseResult result = f.parse();
+        assertEquals(CheckoutParseResult.Status.PARSED, result.status);
+        assertEquals(Long.valueOf(98000), result.observation.unitPriceFen);
+        assertEquals(Integer.valueOf(1), result.observation.quantity);
+    }
+
+    @Test public void changedCombinedTicketLineNeverBackfillsConfiguredAmountOrCount() {
+        for (String text : List.of("980元 × 2张", "980元 × 0张", "980元 × 1张 附加服务", "980元 × 张", "980.001元 × 1张")) {
+            Fixture f = new Fixture(false); f.combinedTicketLine(text);
+            assertNotParsed(f.parse());
+        }
+    }
+
+    @Test public void combinedTicketLineCannotReplaceASecondIndependentRoleOrReuseItsNode() {
+        Fixture f = new Fixture(false); f.combinedTicketLine("980元 × 1张");
+        f.fields.put(Role.PAYABLE, CheckoutProfile.Selector.anchoredValue(id("amounts"), "0", "(980)元 × 1张"));
+        assertEquals("node_reused_across_roles", f.parse().reason);
+    }
+
+    @Test public void combinedTicketLineContractRequiresTwoCapturesAndOneRepresentation() {
+        for (String pattern : List.of("(.+)", "(.+)(.+)(.+)")) {
+            try { CheckoutProfile.Selector.anchoredPriceQuantity(id("amounts"), "0", pattern); fail(); }
+            catch (IllegalArgumentException expected) { assertEquals("price_quantity_two_captures_required", expected.getMessage()); }
+        }
+        Fixture f = new Fixture(false); f.combinedTicketLine("980元 × 1张");
+        f.fields.put(Role.UNIT_PRICE, CheckoutProfile.Selector.value(id("unit"), id("amounts"), "(.+)"));
+        try { f.profile(); fail(); }
+        catch (IllegalArgumentException expected) { assertEquals("choose_one_price_quantity_representation", expected.getMessage()); }
+    }
+
+    @Test public void combinedTicketLineSelectorCannotReadIdentityOrSubmitFields() {
+        for (Role role : List.of(Role.EVENT_TITLE, Role.VIEWER_NAME, Role.AGREEMENT, Role.SUBMIT)) {
+            try {
+                new CheckoutProfile.Builder("cn.damai", VERSION, ZONE).field(role,
+                        CheckoutProfile.Selector.priceQuantity(id("line"), id("amounts"), "(.+) × (.+)"));
+                fail();
+            } catch (IllegalArgumentException expected) { assertEquals("price_quantity_role_required", expected.getMessage()); }
+        }
+    }
+
+    @Test public void anchoredPublicStateStillRequiresZeroFeeAndNativeAgreementCheckedFlag() {
+        Fixture f = new Fixture(false);
+        f.anchoredLabel(Role.EXTRAS_STATUS, "extras_status", "extras", "0", "无附加项目");
+        f.anchoredLabel(Role.AGREEMENT, "agreement", "actions", "0", "已阅读并同意购票协议");
+        assertEquals(CheckoutParseResult.Status.PARSED, f.parse().status);
+        f.flags("actions/0", true, false, false, true);
+        assertFalse(f.parse().observation.agreementsAccepted);
+        f.text("fee", "附加费用：1元");
+        assertNotParsed(f.parse());
+    }
+
+    @Test public void changedOrMovedAnchoredStateDoesNotSatisfyPublicContract() {
+        Fixture f = new Fixture(false);
+        f.anchoredLabel(Role.EXTRAS_STATUS, "extras_status", "extras", "0", "无附加项目");
+        f.text("extras/0", "有附加项目");
+        assertNotParsed(f.parse());
+        Fixture moved = new Fixture(false);
+        moved.anchoredLabel(Role.EXTRAS_STATUS, "extras_status", "extras", "1", "无附加项目");
+        moved.fields.put(Role.EXTRAS_STATUS, CheckoutProfile.Selector.anchoredPublicLabel(id("extras"), "0", "无附加项目"));
+        assertNotParsed(moved.parse());
+    }
+
     @Test public void exactAppVersionAndPackageRequired() {
         Fixture f = new Fixture(false);
         CheckoutFrame frame = f.frame();
@@ -165,6 +230,61 @@ public class CheckoutPageParserTest {
         f.add("pending", "window", "pending", "", false, false, false);
         f.add("pending_marker", "pending", "pending_marker", "待付款", false, false, false);
         assertEquals(CheckoutParseResult.Status.AMBIGUOUS, f.parse().status);
+    }
+
+    @Test public void sharedRootAndTitleIdAreRoutedOnlyByExactConfirmationMarker() {
+        Fixture f = new Fixture(false); f.sharedCheckoutRoot();
+        CheckoutParseResult result = f.parse();
+        assertEquals(CheckoutParseResult.Status.PARSED, result.status);
+        assertEquals(CheckoutObservation.Kind.CONFIRMATION, result.observation.kind);
+    }
+
+    @Test public void sharedRootAndTitleIdAreRoutedOnlyByExactPendingMarker() {
+        Fixture f = new Fixture(true); f.sharedCheckoutRoot();
+        CheckoutParseResult result = f.parse();
+        assertEquals(CheckoutParseResult.Status.PARSED, result.status);
+        assertEquals(CheckoutObservation.Kind.PAYMENT_PENDING, result.observation.kind);
+        assertTrue(result.observation.orderReferenceVerified);
+        assertNull(result.observation.submitTarget);
+    }
+
+    @Test public void separateSharedRootProfilesDoNotBothClaimTheSamePage() {
+        Fixture f = new Fixture(false); f.sharedCheckoutRoot();
+        CheckoutProfile both = f.profile();
+        for (CheckoutObservation.Kind kind : List.of(CheckoutObservation.Kind.CONFIRMATION, CheckoutObservation.Kind.PAYMENT_PENDING)) {
+            CheckoutProfile.Page page = both.pages.get(kind);
+            CheckoutProfile.Builder builder = new CheckoutProfile.Builder("cn.damai", VERSION, ZONE)
+                    .page(kind, page.rootResourceId, page.marker);
+            both.fields.forEach(builder::field);
+            CheckoutParseResult result = CheckoutPageParser.parse(f.frame(), builder.build(), NOW, resolver());
+            assertEquals(kind == CheckoutObservation.Kind.CONFIRMATION ? CheckoutParseResult.Status.PARSED
+                    : CheckoutParseResult.Status.UNSUPPORTED, result.status);
+        }
+    }
+
+    @Test public void unknownSharedRootTitleDoesNotClaimEitherCheckoutPage() {
+        for (String label : List.of("", "确认购…", "待付", "支付成功", "待付款 其他文字")) {
+            Fixture f = new Fixture(false); f.sharedCheckoutRoot(); f.text("marker", label);
+            CheckoutParseResult result = f.parse();
+            assertEquals(CheckoutParseResult.Status.UNSUPPORTED, result.status);
+            assertEquals(CheckoutObservation.Kind.UNKNOWN, result.observation.kind);
+            assertNull(result.observation.submitTarget);
+        }
+    }
+
+    @Test public void sharedRootDuplicateMarkerIsAmbiguousEvenIfOnlyOneLabelMatches() {
+        Fixture f = new Fixture(false); f.sharedCheckoutRoot();
+        f.add("other_marker", "page", "shared_checkout_marker", "待付款", false, false, false);
+        assertEquals(CheckoutParseResult.Status.AMBIGUOUS, f.parse().status);
+    }
+
+    @Test public void sharedRootMissingHiddenOrProtectedMarkerStillFailsClosed() {
+        Fixture missing = new Fixture(false); missing.sharedCheckoutRoot(); missing.remove("marker");
+        assertEquals(CheckoutParseResult.Status.INCOMPLETE, missing.parse().status);
+        Fixture hidden = new Fixture(false); hidden.sharedCheckoutRoot(); hidden.flags("marker", false, false, false, false);
+        assertEquals(CheckoutParseResult.Status.INCOMPLETE, hidden.parse().status);
+        Fixture protectedMarker = new Fixture(false); protectedMarker.sharedCheckoutRoot(); protectedMarker.sensitive("marker");
+        assertEquals(CheckoutParseResult.Status.INCOMPLETE, protectedMarker.parse().status);
     }
 
     @Test public void fieldFromOtherAncestorScopeCannotFillMissingFact() {
@@ -499,6 +619,7 @@ public class CheckoutPageParserTest {
         final List<CheckoutFrame.Node> nodes = new ArrayList<>();
         final Map<Role,CheckoutProfile.Selector> fields = new EnumMap<>(Role.class);
         ZoneId zone = ZONE;
+        boolean sharedPageRoot;
         Fixture(boolean pending) {
             add("window","","window","",false,false,false);
             add("page","window",pending?"pending":"confirmation","",false,false,false);
@@ -552,6 +673,21 @@ public class CheckoutPageParserTest {
                     true,false,false,false,7));
             fields.put(Role.SESSION_DATETIME,CheckoutProfile.Selector.anchoredValue(id("identity"),"3","(.+)"));
         }
+        void combinedTicketLine(String text) {
+            fields.remove(Role.UNIT_PRICE); fields.remove(Role.QUANTITY); remove("unit"); remove("quantity");
+            nodes.add(new CheckoutFrame.Node("amounts/0", "amounts",
+                    new UiItem(text, 1, 100, 300, 130, true, false, false, UiItem.Source.NODE, ""),
+                    true, false, false, false, 7));
+            fields.put(Role.UNIT_PRICE_QUANTITY, CheckoutProfile.Selector.anchoredPriceQuantity(id("amounts"), "0",
+                    "([0-9.]+)元 × ([0-9]+)张"));
+        }
+        void anchoredLabel(Role role, String oldKey, String anchor, String path, String label) {
+            CheckoutFrame.Node old = node(oldKey); remove(oldKey); UiItem i = old.item;
+            nodes.add(new CheckoutFrame.Node(anchor + "/" + path, anchor,
+                    new UiItem(i.text, i.left, i.top, i.right, i.bottom, i.enabled, i.clickable, i.selected, i.source, ""),
+                    old.visible, old.checked, old.checkable, old.sensitive, old.windowId));
+            fields.put(role, CheckoutProfile.Selector.anchoredPublicLabel(id(anchor), path, label));
+        }
         void add(String key,String parent,String resource,String text,boolean clickable,boolean checkable,boolean checked) {
             int y=nodes.size()*20+1;
             nodes.add(new CheckoutFrame.Node(key,parent,new UiItem(text,1,y,101,y+19,true,clickable,false,UiItem.Source.NODE,id(resource)),
@@ -574,11 +710,28 @@ public class CheckoutPageParserTest {
                     visible,checked,checkable,n.sensitive,n.windowId));
         }
         void sensitive(String key) { CheckoutFrame.Node n=node(key);replace(key,new CheckoutFrame.Node(n.key,n.parentKey,n.item,n.visible,n.checked,n.checkable,true,n.windowId)); }
+        void sharedCheckoutRoot() {
+            sharedPageRoot = true;
+            for (String key : List.of("page", "marker")) {
+                CheckoutFrame.Node n = node(key); UiItem i = n.item;
+                String resource = key.equals("page") ? "shared_checkout_root" : "shared_checkout_marker";
+                replace(key, new CheckoutFrame.Node(n.key, n.parentKey,
+                        new UiItem(i.text, i.left, i.top, i.right, i.bottom, i.enabled, i.clickable, i.selected, i.source, id(resource)),
+                        n.visible, n.checked, n.checkable, n.sensitive, n.windowId));
+            }
+        }
         CheckoutFrame frame() { return new CheckoutFrame("cn.damai",VERSION,7,0,4,4,NOW,true,nodes); }
         CheckoutProfile profile() {
-            CheckoutProfile.Builder b=new CheckoutProfile.Builder("cn.damai",VERSION,zone)
-                    .page(CheckoutObservation.Kind.CONFIRMATION,id("confirmation"),new CheckoutProfile.Selector(id("confirmation_marker"),id("confirmation"),"确认购买"))
-                    .page(CheckoutObservation.Kind.PAYMENT_PENDING,id("pending"),new CheckoutProfile.Selector(id("pending_marker"),id("pending"),"待付款"));
+            CheckoutProfile.Builder b=new CheckoutProfile.Builder("cn.damai",VERSION,zone);
+            if (sharedPageRoot) {
+                b.page(CheckoutObservation.Kind.CONFIRMATION, id("shared_checkout_root"),
+                        new CheckoutProfile.Selector(id("shared_checkout_marker"), id("shared_checkout_root"), "确认购买"));
+                b.page(CheckoutObservation.Kind.PAYMENT_PENDING, id("shared_checkout_root"),
+                        new CheckoutProfile.Selector(id("shared_checkout_marker"), id("shared_checkout_root"), "待付款"));
+            } else {
+                b.page(CheckoutObservation.Kind.CONFIRMATION,id("confirmation"),new CheckoutProfile.Selector(id("confirmation_marker"),id("confirmation"),"确认购买"))
+                        .page(CheckoutObservation.Kind.PAYMENT_PENDING,id("pending"),new CheckoutProfile.Selector(id("pending_marker"),id("pending"),"待付款"));
+            }
             for (Map.Entry<Role,CheckoutProfile.Selector> entry:fields.entrySet()) b.field(entry.getKey(),entry.getValue());
             return b.build();
         }

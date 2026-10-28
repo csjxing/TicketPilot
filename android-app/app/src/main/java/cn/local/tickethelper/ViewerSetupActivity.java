@@ -55,14 +55,14 @@ public final class ViewerSetupActivity extends Activity {
         shell.setSaveEnabled(false);
         LinearLayout heading = row(); heading.setPadding(dp(18), dp(5), dp(18), dp(5));
         Button back = link("‹ 返回", v -> finish()); heading.addView(back);
-        TextView title = text("观演人", 17, INK, true); title.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
+        TextView title = text("预选本次观演人", 17, INK, true); title.setGravity(Gravity.END | Gravity.CENTER_VERTICAL);
         heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1)); shell.addView(heading);
 
         ScrollView scroll = new ScrollView(this); scroll.setFillViewport(true);
         LinearLayout body = column(); body.setPadding(dp(22), dp(12), dp(22), dp(24)); scroll.addView(body);
         shell.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1));
         add(body, "这次为谁买票？", 27, INK, true, 8);
-        add(body, "姓名须与大麦中已经登记的观演人完全一致。这里仅保存匹配信息，不会替你新增大麦观演人。", 14, MUTED, false, 12);
+        add(body, "开始前先保存本次要用的观演人。请填写大麦已登记的完整姓名；目前需要在这里填写，尚不支持直接导入大麦名单。", 14, MUTED, false, 12);
         boolean validQuantity = quantity >= 1 && quantity <= 2;
         add(body, validQuantity ? "当前计划：" + quantity + " 张票，需要 " + quantity + " 位观演人。" : "请先将购票计划数量设置为 1 或 2 张。", 14, BLUE, true, 16);
 
@@ -89,13 +89,13 @@ public final class ViewerSetupActivity extends Activity {
         }
         LinearLayout privacy = column(); privacy.setPadding(dp(14), dp(12), dp(14), dp(12)); privacy.setBackground(shape(TINT, TINT));
         add(privacy, "只保存在这台手机", 13, BLUE, true, 0);
-        add(privacy, "姓名与尾号不会发送给模型，也不写入运行日志或电脑交接包。保存后仍需在大麦核对观演人。", 12, MUTED, false, 6);
+        add(privacy, "姓名与尾号不会发送给模型，也不写入运行日志或电脑交接包。保存的是本次匹配信息；真实下单仍需按大麦页面核对。", 12, MUTED, false, 6);
         body.addView(privacy, spacing(18));
         error = text("", 13, Color.rgb(172, 53, 53), false); error.setAccessibilityLiveRegion(View.ACCESSIBILITY_LIVE_REGION_POLITE);
         error.setVisibility(View.GONE); body.addView(error, spacing(12));
 
         LinearLayout footer = column(); footer.setPadding(dp(22), dp(12), dp(22), dp(10)); footer.setBackgroundColor(Color.WHITE);
-        save = button("保存观演人", true, v -> save()); save.setEnabled(validQuantity); footer.addView(save);
+        save = button("保存本次观演人", true, v -> save()); save.setEnabled(validQuantity); footer.addView(save);
         footer.addView(link("取消，保留原设置", v -> finish()), spacing(3)); shell.addView(footer);
         shell.setOnApplyWindowInsetsListener((view, insets) -> {
             android.graphics.Insets bars = insets.getInsets(WindowInsets.Type.systemBars());

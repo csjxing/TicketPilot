@@ -30,6 +30,7 @@ import android.widget.Toast;
 import cn.local.tickethelper.ai.AiContextRepository;
 import cn.local.tickethelper.checkout.LockAuthorization;
 import cn.local.tickethelper.checkout.OrderAttemptStore;
+import cn.local.tickethelper.checkout.OrderCheckoutAdapter;
 import cn.local.tickethelper.core.IntervalSeconds;
 import cn.local.tickethelper.core.MonitorConfig;
 import cn.local.tickethelper.core.MonitorStopState;
@@ -60,7 +61,7 @@ public final class MainActivity extends Activity {
     private MonitorConfig preferenceBase;
     private MonitorConfig.Mode preferredMode;
     private long preferenceRevision;
-    private boolean active, customPace;
+    private boolean active, customPace, refreshReviewAfterViewers;
     private long preferredMin, preferredMax;
     private String draftMin, draftMax;
     private StartReview pageReview;
@@ -82,7 +83,7 @@ public final class MainActivity extends Activity {
         query = state == null ? "" : state.getString("query", "");
         // Uncommitted preference drafts and start confirmations never resume after recreation.
         if ("preferences".equals(route)) beginPreferences();
-        if ("review".equals(route)) { reviewConfig = store.loadConfig(); pageReview = new StartReview(reviewConfig, store.getConfigRevision()); }
+        if ("review".equals(route)) { reviewConfig = store.loadConfig(); pageReview = startReview(reviewConfig); }
         getWindow().setDecorFitsSystemWindows(false);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         getWindow().setStatusBarColor(BG); getWindow().setNavigationBarColor(Color.WHITE);
@@ -120,7 +121,7 @@ public final class MainActivity extends Activity {
         rememberQuery();
         if ("preferences".equals(next)) { pause("正在调整购票条件，尚未开始。"); beginPreferences(); }
         if ("setup".equals(next)) pause("正在准备手机，完成后请重新开始。");
-        if ("review".equals(next)) { reviewConfig = store.loadConfig(); pageReview = new StartReview(reviewConfig, store.getConfigRevision()); }
+        if ("review".equals(next)) { reviewConfig = store.loadConfig(); pageReview = startReview(reviewConfig); }
         route = next; render(); scroll.scrollTo(0,0);
     }
 
@@ -169,13 +170,16 @@ public final class MainActivity extends Activity {
             add(body, "在大麦搜索演出、点选日期，再用悬浮助手读取当前场次。", 14, MUTED, false, 10);
             body.addView(button("打开大麦，显示悬浮助手", true, v -> openCatalog()), space(22));
             body.addView(textAction("还没想好？让领航员帮我整理需求  ↗", () -> openAi("配置建议", "购票需求", query.isBlank() ? "我想看演出，请帮我明确艺人、城市、日期和预算，先问我最重要的一项。" : query)), space(12));
-        } else renderTicket(c);
+        } else {
+            renderTicket(c);
+            if (c.mode != MonitorConfig.Mode.ALERT) renderViewerPreparation(c);
+        }
 
         LinearLayout next = column(); next.setPadding(dp(20),dp(20),dp(20),dp(20)); next.setBackground(shape(INK,INK,18));
         add(next, journey.eyebrow, 11, Color.rgb(174,187,225),true,0);
         add(next, journey.title, 22, Color.WHITE,true,10);
         String detail = journey.detail;
-        if (MonitorService.instance != null && MonitorService.instance.isWaitingForDamai()) detail = "请在 " + MonitorService.instance.waitingForDamaiSeconds() + " 秒内通过最近任务切回目标票档页。";
+        if (MonitorService.instance != null && MonitorService.instance.isWaitingForDamai()) detail = "正在打开大麦并核对目标页面；剩余 " + MonitorService.instance.waitingForDamaiSeconds() + " 秒。";
         add(next, detail, 14, Color.rgb(211,220,242),false,8);
         body.addView(next, space(24));
         body.addView(textAction("不知道怎么继续？打开领航员  ↗", this::openNavigator),space(8));
@@ -183,8 +187,12 @@ public final class MainActivity extends Activity {
             section("购票条件", () -> navigate("preferences"), "调整");
             summaryRow("有票以后", mode(c.mode));
             summaryRow("检查间隔", IntervalSeconds.format(c.minIntervalMs) + "–" + IntervalSeconds.format(c.maxIntervalMs) + " 秒");
+            summaryRow("开始时机", c.saleAt == null ? "现在开始" : c.saleAt.atZone(java.time.ZoneId.of("Asia/Shanghai"))
+                    .format(java.time.format.DateTimeFormatter.ofPattern("MM月dd日 HH:mm 开售")));
+            summaryRow("持续跟进", c.followUpMinutes == 0 ? "直到计划截止" : c.followUpMinutes + " 分钟");
             summaryRow("实付上限", "¥" + c.maxTotal + " · " + c.quantity + " 张");
             add(body,"操作间隔不包含页面加载时间。",12,MUTED,false,7);
+            body.addView(textAction("设置开售等待与回流票跟进  ›", () -> startActivity(new Intent(this,TimingActivity.class))),space(10));
         }
         actionFooter(journey.button, journey.outcome, () -> perform(journey.action));
     }
@@ -210,7 +218,10 @@ public final class MainActivity extends Activity {
         add(body,"发现票以后",20,INK,true,26);
         choice("只提醒我","有票时通知我，我去大麦继续操作。",preferredMode==MonitorConfig.Mode.ALERT,true,() -> {readCustomPace();preferredMode=MonitorConfig.Mode.ALERT;render();});
         choice("帮我选票","选到确认购买页，提交订单和付款由我完成。",preferredMode==MonitorConfig.Mode.PREPARE,true,() -> {readCustomPace();preferredMode=MonitorConfig.Mode.PREPARE;render();});
-        choice("自动锁票 · 尚未就绪","真实订单适配未完成，暂时不能选择。",false,false,() -> {});
+        boolean lockAvailable=orderAdapterAvailable();
+        choice(lockAvailable?"发现票后下单，停在待付款":"自动下单 · 当前版本尚未适配",
+                lockAvailable?"核实票档、张数、观演人和金额后提交一次；付款由我完成。":"确认购买页和待付款页须通过当前大麦版本的真实适配后才能使用。",
+                preferredMode==MonitorConfig.Mode.LOCK_ORDER,lockAvailable,() -> {readCustomPace();preferredMode=MonitorConfig.Mode.LOCK_ORDER;render();});
         add(body,"检查节奏",20,INK,true,28);
         LinearLayout speeds=row();
         paceChip(speeds,"快速","0.5–1.5秒",500,1500);paceChip(speeds,"常用","1–3秒",1000,3000);paceChip(speeds,"稳健","5–10秒",5000,10000);
@@ -232,12 +243,15 @@ public final class MainActivity extends Activity {
     }
 
     private void renderStartReview() {
-        header("准备开始", "再看一眼这场演出，然后按下方两步继续。", () -> navigate("plan"));
+        header("开始前准备", "核对本次计划，完成准备后再开始。", () -> navigate("plan"));
         MonitorConfig c = reviewConfig;
         if (c == null || pageReview == null) { navigate("plan"); return; }
-        renderTicket(c);
+        String title = CatalogActivity.selectedTitle(this,c); if (title.isBlank()) title=c.eventKeyword;
+        add(body,title,18,INK,true,22);
+        add(body,displayDate(c)+"  "+c.time+" · "+c.city,14,MUTED,false,8);
+        add(body,priceText(c)+" · "+c.quantity+" 张 · 总额不超过 ¥"+c.maxTotal,14,BLUE,true,8);
         summaryRow("处理方式", mode(c.mode));
-        summaryRow("实付上限", "¥" + c.maxTotal);
+        if (c.mode != MonitorConfig.Mode.ALERT) renderViewerPreparation(c);
         if (store.isImportedTargetPendingReview() || !validTarget(c)) {
             actionFooter("重新选择并核对", "场次需要从大麦重新核对，暂不能开始。", this::openCatalog); return;
         }
@@ -245,7 +259,15 @@ public final class MainActivity extends Activity {
             actionFooter("先完成手机准备", "连接或权限尚未准备好，完成后回来继续。", () -> navigate("setup")); return;
         }
         if (c.mode == MonitorConfig.Mode.LOCK_ORDER) {
-            actionFooter("选择可用处理方式", "自动锁票尚未完成，请选择提醒或帮我选票。", () -> navigate("preferences")); return;
+            if(pageReview.viewerCount!=c.quantity||pageReview.viewerBinding.isEmpty()) {
+                actionFooter("先预选 "+c.quantity+" 位观演人", "保存后回到这里继续；开始前就会核对人数。",this::openViewers);return;
+            }
+            if(!orderAdapterAvailable()) {
+                actionFooter("选择可用处理方式", "观演人可以提前保存；当前大麦版本的真实订单适配仍待完成。", () -> navigate("preferences")); return;
+            }
+            if(pageReview.eventTitle.isEmpty()) {
+                actionFooter("重新选择演出", "需要从大麦核实完整演出与场次。",this::openCatalog);return;
+            }
         }
         boolean orderNeedsReview;
         try { orderNeedsReview = new OrderAttemptStore(getFilesDir()).read() != null; }
@@ -255,12 +277,26 @@ public final class MainActivity extends Activity {
         }
         setupStep(1, "先准备好大麦页面", false, "在大麦打开这场演出的票档选择页，再返回这里。");
         body.addView(textAction("去大麦打开票档页  ↗", this::openDamai), space(4));
-        setupStep(2, "点开始，再切回大麦", false, "20秒内通过最近任务切回刚才的票档页。保持亮屏，助手才会继续。");
-        boolean unchanged = pageReview.revision == store.getConfigRevision();
-        actionFooter(unchanged ? "票档已打开，开始" : "计划已更新，重新核对",
-                "当前只会提醒或选票到确认页，尚不能自动锁票。", () -> {
-                    if (!unchanged) navigate("review"); else executeStart(pageReview);
+        setupStep(2, "点开始，自动打开大麦", false, "助手会打开大麦并重新核对目标页面。请保持手机解锁、亮屏。");
+        final StartReview visibleReview=pageReview;
+        boolean unchanged = visibleReview.revision == store.getConfigRevision();
+        actionFooter(unchanged ? c.mode==MonitorConfig.Mode.LOCK_ORDER?"开始，发现票后下单":"票档已打开，开始" : "计划已更新，重新核对",
+                c.mode==MonitorConfig.Mode.LOCK_ORDER?"只提交一次，核实待付款后停止；付款由你完成。":"按已选方式提醒，或选票到确认页暂停。", () -> {
+                    if (!unchanged) navigate("review"); else executeStart(visibleReview);
                 });
+    }
+
+    private void renderViewerPreparation(MonitorConfig c) {
+        List<cn.local.tickethelper.checkout.ViewerMatcher.RequestedViewer> viewers=store.getViewerBindings();
+        boolean ready=viewers.size()==c.quantity&&!LockAuthorization.viewerBindingsHash(viewers).isEmpty();
+        LinearLayout card=column();card.setPadding(dp(16),dp(14),dp(16),dp(14));
+        card.setBackground(shape(Color.WHITE,LINE,16));
+        add(card,ready?"本次观演人已预选 · "+c.quantity+" 位":"提前选好本次观演人",16,INK,true,0);
+        add(card,ready?"按本次计划保存在这台手机，可在开始前核对或更改。"
+                :c.mode==MonitorConfig.Mode.LOCK_ORDER?c.quantity+" 张票需要 "+c.quantity+" 位观演人；现在保存，避免有票后再填写。"
+                :"可先保存 "+c.quantity+" 位；只测试选票时可以跳过，到确认购买页再由你继续。",12,MUTED,false,6);
+        card.addView(textAction(ready?"核对或更改观演人  ›":"预选 "+c.quantity+" 位观演人  ›",this::openViewers),space(8));
+        body.addView(card,space(16));
     }
 
     private void paceChip(LinearLayout parent,String title,String sub,long min,long max) {
@@ -281,7 +317,7 @@ public final class MainActivity extends Activity {
         try {
             long min=customPace&&minimum!=null?IntervalSeconds.parse(minimum.getText().toString()):preferredMin;
             long max=customPace&&maximum!=null?IntervalSeconds.parse(maximum.getText().toString()):preferredMax;
-            if(preferredMode==MonitorConfig.Mode.LOCK_ORDER){preferenceError.setText("请选择提醒或帮我选票。自动锁票还未完成。");return;}
+            if(preferredMode==MonitorConfig.Mode.LOCK_ORDER&&!orderAdapterAvailable()){preferenceError.setText("当前大麦版本的真实订单适配尚未就绪，请选择提醒或帮我选票。");return;}
             MonitorConfig changed=TaskPreferences.withMode(TaskPreferences.withPace(preferenceBase,min,max),preferredMode);
             pause("已保存购票条件，尚未开始。");store.saveConfig(changed);navigate("plan");toast("条件已保存");
         }catch(IllegalArgumentException e){preferenceError.setText("间隔应为0.5–600秒，最长值不能小于最短值。");}
@@ -325,14 +361,15 @@ public final class MainActivity extends Activity {
         menuRow("AI 模型","接口、密钥与用量",() -> {pause("正在设置模型，监控暂停。");startActivity(new Intent(this,AiAssistantActivity.class).putExtra("screen","settings").putExtra("origin_label","我的"));});
         menuRow("手机准备",deviceReady()?"已具备运行条件":"检查还缺哪一步",() -> navigate("setup"));
         menuRow("购票条件","有票后的动作与检查速度",() -> navigate("preferences"));
-        menuRow("观演人","按当前票数设置，与大麦登记信息核对",() -> startActivity(new Intent(this,ViewerSetupActivity.class)));
+        menuRow("开售与回流票","等开售立即核查，或现在连续跟进30分钟",() -> startActivity(new Intent(this,TimingActivity.class)));
+        menuRow("本次观演人","开始前预选，按当前票数保存到本机",this::openViewers);
         menuRow("使用指南与记录","查步骤、查看运行结果",() -> navigate("help"));
         section("维护",null,"");
         menuRow("远程诊断","发到文件中转站，让电脑继续排查",() -> startActivity(new Intent(this,RelayActivity.class)));
         menuRow("应用更新与云端协作","安装更新和高级同步设置",() -> startActivity(new Intent(this,CloudActivity.class)));
         menuRow("高级工具","手动目标、兼容设置与导出",() -> openAdvanced("target"));
         menuRow("电脑接手与备份","源码、知识库与交接资料",() -> startActivity(new Intent(this,TransferActivity.class)));
-        add(body,"TicketPilot 0.2.6 · 支持1–2张选票计划\n自动锁票尚未开放，付款由你完成。",12,MUTED,false,28);
+        add(body,"TicketPilot 0.2.8 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
         footer.setVisibility(View.GONE);
     }
 
@@ -351,7 +388,7 @@ public final class MainActivity extends Activity {
         PilotJourney.Input i=new PilotJourney.Input();MonitorService s=MonitorService.instance;
         i.running=s!=null&&s.isRunning();i.waitingForDamai=s!=null&&s.isWaitingForDamai();
         i.hasTarget=!c.eventKeyword.isEmpty();i.targetValid=validTarget(c);i.importedPendingReview=store.isImportedTargetPendingReview();
-        i.deviceReady=deviceReady();i.unsupportedMode=c.mode==MonitorConfig.Mode.LOCK_ORDER;
+        i.deviceReady=deviceReady();i.unsupportedMode=c.mode==MonitorConfig.Mode.LOCK_ORDER&&!orderAdapterAvailable();
         i.stopState=store.getMonitorStopState();
         i.paused=!i.running&&i.stopState==MonitorStopState.NONE&&isPaused(safeStatus());
         // Historical text and model replies never establish checkout/payment success.
@@ -368,7 +405,7 @@ public final class MainActivity extends Activity {
             case START:confirmStart();break;
             case OPEN_DAMAI:
                 if (MonitorService.instance != null && MonitorService.instance.isWaitingForDamai())
-                    message("切回刚才的大麦票档页", "请从屏幕底部上滑并停顿，打开最近任务，点大麦回到刚才的票档页。助手会在那里继续检查。");
+                    openDamai();
                 else openDamai();
                 break;
             case PAUSE:pause("已由你手动暂停。");render();break;
@@ -426,7 +463,6 @@ public final class MainActivity extends Activity {
         MonitorConfig c=store.loadConfig();
         if(store.isImportedTargetPendingReview()||!validTarget(c)){openCatalog();return;}
         if(!deviceReady()){navigate("setup");return;}
-        if(c.mode==MonitorConfig.Mode.LOCK_ORDER){navigate("preferences");toast("自动锁票尚未完成，请选择当前可用方式。");return;}
         MonitorService s=MonitorService.instance;if(s!=null&&s.isRunning()){toast("已在运行");return;}
         navigate("review");
     }
@@ -437,19 +473,45 @@ public final class MainActivity extends Activity {
             toast("准备条件已变化，请重新核对");render();return;
         }
         MonitorService s=MonitorService.instance;
-        if(s==null||s.isRunning()||store.loadConfig().mode==MonitorConfig.Mode.LOCK_ORDER)return;
+        if(s==null||s.isRunning())return;
         try {
             if(new OrderAttemptStore(getFilesDir()).read()!=null){message("先核查已有订单","已有提交记录，不能自动再次操作。请在大麦检查。");return;}
         }catch(Exception e){message("先核查订单","提交记录无法读取，任务没有开始。");return;}
+        MonitorConfig current=store.loadConfig();
+        LockAuthorization grant=null;
+        if(current.mode==MonitorConfig.Mode.LOCK_ORDER) {
+            List<cn.local.tickethelper.checkout.ViewerMatcher.RequestedViewer> viewers=store.getViewerBindings();
+            String binding=LockAuthorization.viewerBindingsHash(viewers);
+            if(!orderAdapterAvailable()||viewers.size()!=current.quantity||binding.isEmpty()
+                    ||!binding.equals(review.viewerBinding)||!review.eventTitle.equals(CatalogActivity.selectedTitle(this,current))
+                    ||review.eventTitle.isEmpty()) {
+                message("开始条件已变化","请重新核实当前大麦版本、演出和本次观演人。任务没有启动。");navigate("review");return;
+            }
+            long now=System.currentTimeMillis();
+            grant=new LockAuthorization(java.util.UUID.randomUUID().toString(),current,review.eventTitle,binding,now,current.deadline.toEpochMilli());
+            if(!grant.validFor(current,now)){message("本次目标不能启动","请重新核实演出日期、截止时间与观演人。任务没有启动。");return;}
+        }
         store.appendEvent("START_RECEIVED","activity_button",0);
-        try{s.arm();}catch(RuntimeException e){store.setArmed(false);try{s.pause("启动失败，任务已暂停。");}catch(RuntimeException ignored){}store.appendEvent("START_FAILED","arm_runtime_exception",0);}
+        try{if(grant==null)s.arm();else s.armForOrder(grant);}catch(RuntimeException e){store.setArmed(false);try{s.pause("启动失败，任务已暂停。");}catch(RuntimeException ignored){}store.appendEvent("START_FAILED","arm_runtime_exception",0);}
         route = "plan"; render();
+        if(store.isArmed())openDamai();
     }
 
-    private static final class StartReview {
-        final long revision;final String fingerprint;
-        StartReview(MonitorConfig c,long revision){this.revision=revision;this.fingerprint=LockAuthorization.configFingerprint(c);}
+    private StartReview startReview(MonitorConfig c) {
+        List<cn.local.tickethelper.checkout.ViewerMatcher.RequestedViewer> viewers=store.getViewerBindings();
+        return new StartReview(c,store.getConfigRevision(),CatalogActivity.selectedTitle(this,c),
+                LockAuthorization.viewerBindingsHash(viewers),viewers.size());
     }
+    private static final class StartReview {
+        final long revision;final String fingerprint,eventTitle,viewerBinding;final int viewerCount;
+        StartReview(MonitorConfig c,long revision,String eventTitle,String viewerBinding,int viewerCount){
+            this.revision=revision;this.fingerprint=LockAuthorization.configFingerprint(c);
+            this.eventTitle=eventTitle;this.viewerBinding=viewerBinding;this.viewerCount=viewerCount;
+        }
+    }
+
+    private boolean orderAdapterAvailable(){return OrderCheckoutAdapter.isLiveVerified()&&OrderCheckoutAdapter.supportsInstalledVersion(this);}
+    private void openViewers(){pause("正在明确本次观演人，监控保持暂停。");refreshReviewAfterViewers="review".equals(route);startActivity(new Intent(this,ViewerSetupActivity.class));}
 
     private void pause(String reason) {
         MonitorService s=MonitorService.instance;
@@ -497,9 +559,16 @@ public final class MainActivity extends Activity {
     }
 
     private void openDamai(){
-        Intent launch=getPackageManager().getLaunchIntentForPackage("cn.damai");
-        if(launch==null){message("没有找到大麦","请先安装官方大麦并登录。");return;}
-        try{startActivity(launch);}catch(RuntimeException e){toast("请在手机上手动打开大麦");}
+        Intent query=new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER).setPackage("cn.damai");
+        android.content.pm.ResolveInfo resolved=getPackageManager().resolveActivity(query,0);
+        if(resolved==null||resolved.activityInfo==null||!resolved.activityInfo.enabled
+                ||!resolved.activityInfo.exported||!"cn.damai".equals(resolved.activityInfo.packageName)){
+            message("没有找到大麦","请先安装官方大麦并登录。");return;
+        }
+        Intent launch=Intent.makeMainActivity(new android.content.ComponentName(
+                resolved.activityInfo.packageName,resolved.activityInfo.name));
+        try{startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK|Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED));}
+        catch(RuntimeException e){toast("请在手机上手动打开大麦");}
     }
 
     private String safeStatus(){String s=store.getStatus();if(s==null||s.isBlank())return "尚未开始。";return s.length()>240?s.substring(0,240):s;}
@@ -508,7 +577,7 @@ public final class MainActivity extends Activity {
         if(stopped!=MonitorStopState.NONE)return stopped==MonitorStopState.NEEDS_ATTENTION||stopped==MonitorStopState.REVIEW_DAMAI||stopped==MonitorStopState.REVIEW_ORDER;
         return s.contains("锁屏")||s.contains("熄屏")||s.contains("切换应用")||s.contains("不在大麦")||s.contains("断开")||s.contains("失败")||s.contains("超时")||s.contains("未知")||s.contains("无法")||s.contains("验证码");
     }
-    private String mode(MonitorConfig.Mode m){return m==MonitorConfig.Mode.ALERT?"有票时提醒我":m==MonitorConfig.Mode.PREPARE?"帮我选票，到确认页停下":"自动锁票 · 尚未开放";}
+    private String mode(MonitorConfig.Mode m){return m==MonitorConfig.Mode.ALERT?"有票时提醒我":m==MonitorConfig.Mode.PREPARE?"帮我选票，到确认页停下":orderAdapterAvailable()?"发现票后下单，停在待付款":"自动下单 · 当前版本尚未适配";}
     private String displayDate(MonitorConfig c){try{return LocalDate.parse(c.date).format(DateTimeFormatter.ofPattern("yyyy年M月d日 EEE",Locale.CHINA));}catch(RuntimeException e){return "日期待选择";}}
     private String priceText(MonitorConfig c){return c.prices.isEmpty()?"票价待选择":"¥"+String.join(" / ¥",c.prices.stream().map(String::valueOf).collect(java.util.stream.Collectors.toList()));}
 
@@ -547,7 +616,12 @@ public final class MainActivity extends Activity {
         } catch (Exception e) { message("未能导出", "请换一个保存位置后重试。"); }
     }
 
-    @Override protected void onResume(){super.onResume();active=true;if(!"preferences".equals(route))lastRender="";handler.removeCallbacks(refresh);handler.post(refresh);}
+    @Override protected void onResume(){super.onResume();active=true;
+        if(refreshReviewAfterViewers&&"review".equals(route)){
+            refreshReviewAfterViewers=false;reviewConfig=store.loadConfig();pageReview=startReview(reviewConfig);render();
+        }
+        if(!"preferences".equals(route))lastRender="";handler.removeCallbacks(refresh);handler.post(refresh);
+    }
     @Override protected void onPause(){active=false;handler.removeCallbacks(refresh);super.onPause();}
     @Override public void onRequestPermissionsResult(int request,String[] permissions,int[] results){super.onRequestPermissionsResult(request,permissions,results);render();}
     @Override public void onBackPressed(){if(!"plan".equals(route))navigate("plan");else super.onBackPressed();}

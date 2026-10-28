@@ -15,7 +15,7 @@ public final class OrderCheckoutAdapter {
     private OrderCheckoutAdapter() { }
     private static final List<CheckoutProfile> VERIFIED_PROFILES = List.of();
 
-    /** Empty until both page types have real-device evidence for one exact package build. */
+    /** Complete page-reading capability; this is not evidence that an order has been created. */
     public static boolean isLiveVerified() {
         return VERIFIED_PROFILES.stream().anyMatch(profile -> supportedVersion(profile.appVersion));
     }
@@ -24,12 +24,25 @@ public final class OrderCheckoutAdapter {
         return supportedVersion(installedVersion(context));
     }
 
+    /** Reviewed confirmation only. A missing pending profile must remain an unknown result. */
+    public static boolean isConfirmationSubmissionVerified() {
+        return VERIFIED_PROFILES.stream().anyMatch(profile -> confirmationSupportedVersion(profile.appVersion));
+    }
+
+    public static boolean supportsInstalledConfirmationSubmission(Context context) {
+        return confirmationSupportedVersion(installedVersion(context));
+    }
+
+    public static boolean supportsInstalledPendingPaymentRead(Context context) {
+        return CheckoutCapabilities.forVersion(VERIFIED_PROFILES, installedVersion(context)).pendingPaymentRead;
+    }
+
     /** Match the frozen no-ID contract back to one verified current-version profile before live rebinding. */
     public static AccessibilityNodeInfo findSubmitTarget(AccessibilityService service,VerifiedSubmitProposal proposal,
                                                           LongSupplier generation,long deadlineElapsedMs) {
         if (proposal == null || generation == null || generation.getAsLong() != proposal.frameGeneration) return null;
         String version=installedVersion(service);
-        if (!supportedVersion(version)) return null;
+        if (!confirmationSupportedVersion(version)) return null;
         if (proposal.submitBinding == null)
             return CheckoutNativeTarget.find(service,proposal.submitTarget,proposal.windowId,deadlineElapsedMs);
         int matches=0;
@@ -50,7 +63,7 @@ public final class OrderCheckoutAdapter {
                                                 List<ViewerMatcher.RequestedViewer> viewers, long deadlineElapsedMs) {
         if (!ViewerMatcher.validRequests(viewers)) return false;
         String version = installedVersion(context);
-        if (!supportedVersion(version)) return false;
+        if (!confirmationSupportedVersion(version)) return false;
         int matching = 0;
         for (CheckoutProfile profile : VERIFIED_PROFILES) {
             if (!profile.appVersion.equals(version) || !profile.pages.containsKey(CheckoutObservation.Kind.CONFIRMATION)) continue;
@@ -73,7 +86,7 @@ public final class OrderCheckoutAdapter {
         if (!ViewerMatcher.validRequests(viewers)) return unavailable("invalid_viewer_config", relatedAttemptId);
         List<ViewerMatcher.RequestedViewer> requested = List.copyOf(viewers);
         String version = installedVersion(service);
-        if (!supportedVersion(version)) return unavailable("checkout_version_not_verified", relatedAttemptId);
+        if (!confirmationSupportedVersion(version)) return unavailable("checkout_version_not_verified", relatedAttemptId);
         CheckoutFrame frame = CheckoutFrameReader.capture(service, version, generation);
         CheckoutPageParser.ViewerResolver resolver = (rows, complete) -> ViewerMatcher.matchMany(requested, rows, complete);
         CheckoutParseResult selected = null;
@@ -88,14 +101,11 @@ public final class OrderCheckoutAdapter {
     }
 
     private static boolean supportedVersion(String version) {
-        if (version.isEmpty()) return false;
-        boolean confirmation = false, pending = false;
-        for (CheckoutProfile profile : VERIFIED_PROFILES) {
-            if (!"cn.damai".equals(profile.packageName) || !version.equals(profile.appVersion)) continue;
-            confirmation |= profile.pages.containsKey(CheckoutObservation.Kind.CONFIRMATION);
-            pending |= profile.pages.containsKey(CheckoutObservation.Kind.PAYMENT_PENDING);
-        }
-        return confirmation && pending;
+        return CheckoutCapabilities.forVersion(VERIFIED_PROFILES, version).completeCheckoutRead();
+    }
+
+    private static boolean confirmationSupportedVersion(String version) {
+        return CheckoutCapabilities.forVersion(VERIFIED_PROFILES, version).confirmationSubmission;
     }
 
     private static String installedVersion(Context context) {

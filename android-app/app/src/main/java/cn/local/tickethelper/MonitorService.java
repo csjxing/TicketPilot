@@ -23,8 +23,14 @@ import android.view.accessibility.AccessibilityNodeInfo;
 import cn.local.tickethelper.core.ActionPacing;
 import cn.local.tickethelper.core.Decision;
 import cn.local.tickethelper.core.DecisionEngine;
+import cn.local.tickethelper.core.DetailOcrNavigation;
+import cn.local.tickethelper.core.DetailScrollPolicy;
+import cn.local.tickethelper.core.InputDispatchPolicy;
+import cn.local.tickethelper.core.InputDispatchPolicy.Rejection;
 import cn.local.tickethelper.core.MonitorConfig;
 import cn.local.tickethelper.core.Observation;
+import cn.local.tickethelper.core.QuantityTransition;
+import cn.local.tickethelper.core.SaleTiming;
 import cn.local.tickethelper.core.UiItem;
 import cn.local.tickethelper.ai.AiContextRepository;
 import cn.local.tickethelper.ai.AiPageSummary;
@@ -79,9 +85,17 @@ public final class MonitorService extends AccessibilityService {
     private String lastWindowEventSummary = "none";
     private long transitionAt;
     private Decision.Action transitionAction = Decision.Action.NONE;
+    private final QuantityTransition quantityTransition = new QuantityTransition();
+    private Runnable quantityTimeout;
+    private SaleTiming saleTiming;
+    private SaleTiming.Phase salePhase;
+    private boolean reservationExitAttempted;
+    private long detailSettleReadAfter;
     private String lastStatus = "";
     private int unknownCount, actionFailures;
     private final cn.local.tickethelper.core.ReadStability readRecovery = new cn.local.tickethelper.core.ReadStability();
+    // Reset after a dispatched action, never merely because another OCR frame was accepted.
+    private final cn.local.tickethelper.core.ReadStability inputReadRecovery = new cn.local.tickethelper.core.ReadStability();
     private long readBoundaryGeneration, lastReadBoundaryElapsed;
     private final Runnable tick = () -> { scheduledAt = 0; scan(); };
     private Runnable watchdog;
@@ -105,7 +119,7 @@ public final class MonitorService extends AccessibilityService {
         if (inputBridge != null) inputBridge.cancelPending();
         handler.removeCallbacks(tick); scheduledAt = 0;
         if (watchdog != null) { handler.removeCallbacks(watchdog); watchdog = null; }
-        engine.reset(); transitionAction = Decision.Action.NONE;
+        engine.reset(); transitionAction = Decision.Action.NONE; clearQuantityTransition();
         releaseConnectionResources();
         store = new AppStore(this); ocr = new OcrReader(this);
         inputBridge = ShizukuInputBridge.get(this);
@@ -376,11 +390,15 @@ public final class MonitorService extends AccessibilityService {
             pause("请在通知设置开启“有票及需要处理”类别。"); return;
         }
         if (config.deadline.toEpochMilli() <= System.currentTimeMillis()) { pause("截止时间已过，请设置新任务。"); return; }
+        SaleTiming preparedTiming = new SaleTiming(config, System.currentTimeMillis(), SystemClock.elapsedRealtime());
+        SaleTiming.Tick initialTiming = preparedTiming.tick(System.currentTimeMillis(), SystemClock.elapsedRealtime());
+        if (initialTiming.phase == SaleTiming.Phase.STOPPED) { pause(initialTiming.statusText()); return; }
         if (ocr.isBusy()) { ocr.close(); ocr = new OcrReader(this); }
         generation++; engine.reset(); busy = false; running = true; targetSeen = false;
         startedAt = SystemClock.elapsedRealtime(); lastNavigationAt = 0; nextActionAt = 0;
-        lastCaptureAt = 0; unknownCount = 0; actionFailures = 0; readRecovery.reset();
-        lastStatus = ""; transitionAction = Decision.Action.NONE; scheduledAt = 0;
+        saleTiming = preparedTiming; salePhase = null; reservationExitAttempted = false;
+        lastCaptureAt = 0; detailSettleReadAfter = 0; unknownCount = 0; actionFailures = 0; readRecovery.reset(); inputReadRecovery.reset();
+        lastStatus = ""; transitionAction = Decision.Action.NONE; clearQuantityTransition(); scheduledAt = 0;
         getSystemService(NotificationManager.class).cancel(11);
         getSystemService(NotificationManager.class).cancel(12);
         store.setArmed(true); store.appendEvent("ARMED", "user_started", 0);
@@ -395,6 +413,9 @@ public final class MonitorService extends AccessibilityService {
         boolean wasRunning = running;
         cancelAiPageRead();
         running = false; busy = false; generation++; engine.reset(); handler.removeCallbacks(tick);
+        clearQuantityTransition(); transitionAction = Decision.Action.NONE;
+        saleTiming = null; salePhase = null;
+        detailSettleReadAfter = 0;
         if (inputBridge != null) inputBridge.cancelPending();
         invalidateOrderAuthorization();
         scheduledAt = 0;
@@ -435,8 +456,12 @@ public final class MonitorService extends AccessibilityService {
             }
         } else if (TARGET.equals(pkg)) recordWindowChange(type, pkg);
         if (!TARGET.equals(pkg)) return;
-        // Events may shorten observation latency; actions still respect the configured interval.
-        if (!busy) schedule(500);
+        // Native events wake local observation; they are not server requests or action authority.
+        if (!busy) {
+            SaleTiming.Tick timing = timingTick();
+            schedule(timing != null && timing.phase == SaleTiming.Phase.WAITING_FOR_SALE
+                    ? timing.nextWakeMs : SaleTiming.eventReadDelayMs());
+        }
     }
 
     /** Strict input generation still includes every old event. Read recovery distinguishes content-only noise. */
@@ -504,6 +529,22 @@ public final class MonitorService extends AccessibilityService {
         if (config.mode == MonitorConfig.Mode.LOCK_ORDER && !orderGrantCurrent()) {
             stop("自动下单授权或目标设置已变化，请回助手重新核对。", "PAUSED", "order_grant_invalidated", true); return;
         }
+        SaleTiming.Tick timing = timingTick();
+        if (timing == null || timing.phase == SaleTiming.Phase.STOPPED) {
+            stop(timing == null ? "监控计时无法核实，任务已暂停。" : timing.statusText(),
+                    timing != null && timing.stopReason == SaleTiming.StopReason.DEADLINE_REACHED ? "EXPIRED" : "CONFIG_INVALID",
+                    timing != null && timing.stopReason == SaleTiming.StopReason.DEADLINE_REACHED ? "deadline_reached" : "invalid_configuration", true); return;
+        }
+        if (timing.phase != salePhase) {
+            salePhase = timing.phase;
+            store.appendEvent("SALE_TIMING", timing.phase.name().toLowerCase(Locale.ROOT), 0);
+        }
+        if (!timing.mayReadOfficialPage()) {
+            if (!timing.statusText().equals(lastStatus)) status(timing.statusText());
+            schedule(timing.nextWakeMs); return;
+        }
+        long settleRemaining = detailSettleReadAfter - SystemClock.elapsedRealtime();
+        if (settleRemaining > 0) { schedule(settleRemaining); return; }
         if (ocr.isBusy()) { schedule(700); return; }
         busy = true;
         long token = generation, pageToken = windowGeneration, began = SystemClock.elapsedRealtime();
@@ -521,7 +562,11 @@ public final class MonitorService extends AccessibilityService {
         }
         List<UiItem> nodes = readNodes();
         Decision decision = engine.evaluate(config, new Observation(TARGET, nodes, observedAt), lastNavigationAt);
-        if (decision.state != Decision.State.UNKNOWN) {
+        boolean quantityNeedsReadback = quantityTransition.pending()
+                && decision.state != Decision.State.BLOCKED && decision.state != Decision.State.EXPIRED
+                && decision.state != Decision.State.CHECKOUT && decision.state != Decision.State.UNRELATED
+                && decision.state != Decision.State.CONFIG_INVALID;
+        if (decision.state != Decision.State.UNKNOWN && !quantityNeedsReadback) {
             if (valid(token, pageToken)) readRecovery.reset();
             handle(decision, began, token, pageToken, nodes.size(), 0, false); return;
         }
@@ -533,6 +578,9 @@ public final class MonitorService extends AccessibilityService {
             if (error != null) {
                 stop("页面截图或本地识别不可用，请在手机检查后重新开始。", "BLOCKED", error, true); return;
             }
+            // A BACK-scoped, one-shot reversible scroll is the sole content-only OCR exception.
+            // It accepts no stock/selection/click evidence, and preserves the original timestamp.
+            if (tryDetailSettle(nodes, items, observedAt, token, pageToken, boundaryToken, readWindow)) return;
             if (!valid(token, pageToken)) {
                 long currentPage = windowGeneration;
                 if (running && unlocked() && TARGET.equals(foreground())
@@ -562,6 +610,111 @@ public final class MonitorService extends AccessibilityService {
         });
     }
 
+    private boolean tryDetailSettle(List<UiItem> nodes, List<UiItem> items, long observedAt,
+                                    long token, long pageToken, long boundaryToken, int readWindow) {
+        if (!running || token != generation || liveOrderAttempt != null || quantityTransition.pending()
+                || transitionAction != Decision.Action.NONE) return false;
+        long currentPage = windowGeneration;
+        if (!valid(token, currentPage) || !DetailScrollPolicy.mayPrepareFrame(pageToken, currentPage,
+                boundaryToken, readBoundaryGeneration, readWindow, currentReadWindow(),
+                System.currentTimeMillis() - observedAt, nodes, readNodes())) return false;
+        List<UiItem> merged = mergeReadItems(nodes, items);
+        Decision proposal = engine.prepareDetailScroll(config, new Observation(TARGET, merged, observedAt));
+        if (proposal == null) return false;
+        AccessibilityNodeInfo anchor = getRootInActiveWindow();
+        Rect bounds = new Rect();
+        if (!detailScrollRootSafe(anchor, null, readWindow)) {
+            stop("详情稳定滚动的窗口无法核实，已暂停。", "UNKNOWN", "detail_scroll_anchor_unverified", true); return true;
+        }
+        anchor.getBoundsInScreen(bounds);
+        android.hardware.display.DisplayManager manager = getSystemService(android.hardware.display.DisplayManager.class);
+        android.view.Display display = manager == null ? null : manager.getDisplay(android.view.Display.DEFAULT_DISPLAY);
+        android.util.DisplayMetrics metrics = new android.util.DisplayMetrics();
+        if (display == null || display.getState() != android.view.Display.STATE_ON) {
+            stop("详情稳定滚动的屏幕无法核实，已暂停。", "BLOCKED", "detail_scroll_anchor_unverified", true); return true;
+        }
+        display.getRealMetrics(metrics);
+        DetailScrollPolicy.Plan plan = DetailScrollPolicy.forRoot(bounds.left, bounds.top, bounds.right, bounds.bottom,
+                metrics.widthPixels, metrics.heightPixels);
+        if (plan == null || !valid(token, windowGeneration) || !engine.consumeDetailScroll(proposal, config)) {
+            stop("详情稳定滚动的授权或区域无法核实，已暂停。", "UNKNOWN", "detail_scroll_anchor_unverified", true); return true;
+        }
+        store.appendEvent("DETAIL_SETTLE", "scroll_proposed_once", 0);
+        ShizukuInputBridge.DispatchGuard guard = new ShizukuInputBridge.DispatchGuard() {
+            private Rejection reason = Rejection.NONE;
+            @Override public Rejection rejection() { return reason; }
+            @Override public boolean allow() {
+                reason = detailScrollRejection(proposal, anchor, bounds, nodes, token, pageToken, boundaryToken, readWindow);
+                return reason == Rejection.NONE;
+            }
+        };
+        if (AppStore.INPUT_SHIZUKU.equals(inputMode)) {
+            long age = System.currentTimeMillis() - observedAt;
+            long deadline = SystemClock.elapsedRealtime() + Math.min(2000, Math.max(1, 3000 - age));
+            inputBridge.scrollDetailUp(bounds.left, bounds.top, bounds.right, bounds.bottom, deadline, guard,
+                    result -> finishDetailSettle(proposal, token, result.success, result.outcomeUnknown, result.guardRejection));
+        } else {
+            if (!guard.allow()) { finishDetailSettle(proposal, token, false, false, guard.rejection()); return true; }
+            Path path = new Path(); path.moveTo(plan.x, plan.startY); path.lineTo(plan.x, plan.endY);
+            GestureDescription gesture = new GestureDescription.Builder().setDisplayId(android.view.Display.DEFAULT_DISPLAY)
+                    .addStroke(new GestureDescription.StrokeDescription(path, 0, DetailScrollPolicy.DURATION_MS)).build();
+            boolean accepted = dispatchGesture(gesture, new GestureResultCallback() {
+                @Override public void onCompleted(GestureDescription description) {
+                    finishDetailSettle(proposal, token, true, false, Rejection.NONE);
+                }
+                @Override public void onCancelled(GestureDescription description) {
+                    finishDetailSettle(proposal, token, false, true, Rejection.NONE);
+                }
+            }, handler);
+            if (!accepted) finishDetailSettle(proposal, token, false, false, Rejection.NONE);
+        }
+        return true;
+    }
+
+    private Rejection detailScrollRejection(Decision proposal, AccessibilityNodeInfo anchor, Rect bounds,
+                                            List<UiItem> originalNative, long token, long pageToken,
+                                            long boundaryToken, int readWindow) {
+        if (!running) return Rejection.MONITOR_STOPPED;
+        if (token != generation) return Rejection.MONITOR_GENERATION_CHANGED;
+        if (!unlocked()) return Rejection.SCREEN_LOCKED;
+        if (!TARGET.equals(foreground())) return Rejection.FOREGROUND_CHANGED;
+        if (!timingPermitsRead()) return Rejection.TIMING_DISALLOWED;
+        if (!engine.detailScrollCurrent(proposal, config)) return Rejection.TARGET_PATH_UNVERIFIED;
+        long currentPage = windowGeneration;
+        if (boundaryToken != readBoundaryGeneration || readWindow != currentReadWindow()) return Rejection.PAGE_BOUNDARY_CHANGED;
+        if (!DetailScrollPolicy.mayPrepareFrame(pageToken, currentPage, boundaryToken, readBoundaryGeneration,
+                readWindow, currentReadWindow(), System.currentTimeMillis() - proposal.observedAtMs,
+                originalNative, readNodes())) return Rejection.PAGE_CONTENT_CHANGED;
+        if (!detailScrollRootSafe(anchor, bounds, readWindow)) return Rejection.TARGET_PATH_UNVERIFIED;
+        return valid(token, currentPage) && boundaryToken == readBoundaryGeneration ? Rejection.NONE : Rejection.PAGE_BOUNDARY_CHANGED;
+    }
+
+    private boolean detailScrollRootSafe(AccessibilityNodeInfo root, Rect expected, int windowId) {
+        if (root == null || !root.refresh() || !root.isVisibleToUser() || !root.isEnabled() || root.isPassword()
+                || root.getParent() != null || !TARGET.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())
+                || (Build.VERSION.SDK_INT >= 34 && root.isAccessibilityDataSensitive()) || root.getWindowId() != windowId) return false;
+        android.view.accessibility.AccessibilityWindowInfo window = root.getWindow();
+        if (window == null || !window.isActive() || window.getDisplayId() != android.view.Display.DEFAULT_DISPLAY) return false;
+        Rect bounds = new Rect(); root.getBoundsInScreen(bounds);
+        return !bounds.isEmpty() && (expected == null || expected.equals(bounds));
+    }
+
+    private void finishDetailSettle(Decision proposal, long token, boolean success, boolean unknown, Rejection rejection) {
+        if (!running || token != generation) return;
+        engine.finishDetailScroll(proposal);
+        if (rejection != Rejection.NONE) store.appendEvent("LOCAL_INPUT_GUARD", rejection.code(), 0);
+        if (!success) {
+            stop("详情稳定滚动未能确认完成，已暂停；不会重复滚动。", unknown ? "UNKNOWN" : "BLOCKED",
+                    "detail_scroll_input_unconfirmed", true); return;
+        }
+        // No actionDone: preserve BACK's existing interval/cooldown and the fixed permit expiry.
+        store.appendEvent("DETAIL_SETTLE", "scroll_command_completed", 0);
+        busy = false; readRecovery.reset(); lastCaptureAt = 0;
+        detailSettleReadAfter = SystemClock.elapsedRealtime() + DetailScrollPolicy.SETTLE_READ_DELAY_MS;
+        status("已尝试一次普通详情滚动，正在重新读取完整项目与入口；库存仍待核实。");
+        schedule(DetailScrollPolicy.SETTLE_READ_DELAY_MS);
+    }
+
     private int currentReadWindow() {
         AccessibilityNodeInfo root = getRootInActiveWindow();
         if (root == null || !TARGET.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())) return -1;
@@ -574,15 +727,28 @@ public final class MonitorService extends AccessibilityService {
                                    long observedAt, long began, long token, long pageToken) {
         if (!valid(token, pageToken)) { deferChangedRead(began); return; }
         readRecovery.reset();
+        List<UiItem> merged = mergeReadItems(nodes, items);
+        // Preserve the original OCR observation time; visual revalidation never renews input freshness.
+        Decision read = engine.evaluate(config, new Observation(TARGET, merged, observedAt, evidence), lastNavigationAt);
+        if ((getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0
+                && evidence != null && read.reason.equals("adapter_quantity_or_total_not_verified")) {
+            store.appendEvent("SELECTION_CHECK", evidence.quantity == null ? "quantity_unverified"
+                    : evidence.totalYuan == null ? "total_unverified"
+                    : evidence.confirmTarget == null ? "confirm_unverified"
+                    : evidence.quantityIncreaseTarget == null ? "increase_unverified"
+                    : "combined_evidence_conflict", 0);
+        }
+        handle(read, began, token, pageToken, nodes.size(), items.size(), true);
+    }
+
+    private static List<UiItem> mergeReadItems(List<UiItem> nodes, List<UiItem> items) {
         List<UiItem> merged = new ArrayList<>(nodes);
         for (UiItem text : items) {
             boolean duplicate = nodes.stream().anyMatch(n -> n.text.equals(text.text)
                     && Math.abs(n.centerY() - text.centerY()) < 30 && Math.abs(n.centerX() - text.centerX()) < 50);
             if (!duplicate) merged.add(text);
         }
-        // Preserve the original OCR observation time; visual revalidation never renews input freshness.
-        Decision read = engine.evaluate(config, new Observation(TARGET, merged, observedAt, evidence), lastNavigationAt);
-        handle(read, began, token, pageToken, nodes.size(), items.size(), true);
+        return merged;
     }
 
     private void deferChangedRead(long began) {
@@ -600,7 +766,19 @@ public final class MonitorService extends AccessibilityService {
     }
 
     private boolean valid(long token, long pageToken) {
-        return running && token == generation && pageToken == windowGeneration && unlocked() && TARGET.equals(foreground());
+        return running && token == generation && pageToken == windowGeneration && unlocked() && TARGET.equals(foreground())
+                && timingPermitsRead();
+    }
+
+    private SaleTiming.Tick timingTick() {
+        return saleTiming == null ? null : saleTiming.tick(System.currentTimeMillis(), SystemClock.elapsedRealtime());
+    }
+    private boolean timingPermitsRead() {
+        SaleTiming.Tick timing = timingTick(); return timing != null && timing.mayReadOfficialPage();
+    }
+    private long observationDelay() {
+        SaleTiming.Tick timing = timingTick();
+        return timing == null ? SaleTiming.LIVE_READ_DELAY_MS : Math.max(1, timing.nextWakeMs);
     }
 
     private void handle(Decision decision, long began, long token, long pageToken,
@@ -610,15 +788,40 @@ public final class MonitorService extends AccessibilityService {
         AiContextRepository.recordDecision(decision);
         store.appendObservation(decision.state.name(), decision.reason, SystemClock.elapsedRealtime() - began,
                 nodeCount, ocrCount, usedOcr);
+        if (transitionAction == Decision.Action.INCREASE_QUANTITY) {
+            if (decision.state == Decision.State.CHECKOUT) {
+                stop("数量调整后进入了其他页面，尚未确认两张，已暂停。", "UNKNOWN", "quantity_transition_page_changed", true); return;
+            }
+            if (decision.state != Decision.State.BLOCKED && decision.state != Decision.State.EXPIRED
+                    && decision.state != Decision.State.UNRELATED && decision.state != Decision.State.CONFIG_INVALID) {
+                if (decision.state == Decision.State.OUT_OF_STOCK) {
+                    clearQuantityTransition(); transitionAction = Decision.Action.NONE;
+                } else {
+                    QuantityTransition.Result readback = quantityTransition.inspect(decision.selectionEvidence, SystemClock.elapsedRealtime());
+                    if (readback == QuantityTransition.Result.CHANGED || readback == QuantityTransition.Result.TIMED_OUT) {
+                        stop("加号已尝试一次，但两张数量与票款未能核实；已暂停，不会重复点击。", "UNKNOWN", "quantity_transition_unverified", true); return;
+                    }
+                    if (readback != QuantityTransition.Result.VERIFIED || decision.state != Decision.State.TIER_SELECTED) {
+                        busy = false; status("正在核对两张数量与票款，不会再次点击加号。"); schedule(observationDelay()); return;
+                    }
+                    clearQuantityTransition(); transitionAction = Decision.Action.NONE;
+                }
+            }
+        }
         if (transitionAction != Decision.Action.NONE && decision.state != Decision.State.CHECKOUT
                 && decision.state != Decision.State.BLOCKED && decision.state != Decision.State.EXPIRED) {
-            boolean stillPending = transitionAction == Decision.Action.CONFIRM_TIER
-                    || (decision.state != Decision.State.TIER_SELECTED && decision.state != Decision.State.OUT_OF_STOCK);
+            boolean sessionVerified = decision.selectionEvidence != null
+                    && decision.selectionEvidence.observedAtMs == decision.observedAtMs
+                    && config.date.equals(decision.selectionEvidence.date) && config.time.equals(decision.selectionEvidence.time);
+            boolean stillPending = transitionAction == Decision.Action.SELECT_SESSION ? !sessionVerified
+                    : transitionAction == Decision.Action.CONFIRM_TIER
+                    || (decision.state != Decision.State.TIER_SELECTED && decision.state != Decision.State.OUT_OF_STOCK
+                        && !QuantityTransition.isIncreaseProposal(decision));
             if (stillPending) {
                 if (SystemClock.elapsedRealtime() - transitionAt >= 6000) {
                     stop("操作后的页面变化未能核实，已暂停，请手动检查。", "UNKNOWN",
                             "transition_unverified:" + decision.reason, true);
-                } else { busy = false; schedule(700); }
+                } else { busy = false; schedule(observationDelay()); }
                 return;
             }
             transitionAction = Decision.Action.NONE;
@@ -639,6 +842,7 @@ public final class MonitorService extends AccessibilityService {
             case UNRELATED:
                 stop("当前页面不匹配，任务暂停。", "UNRELATED", decision.reason, true); return;
             case UNKNOWN:
+                if (waitForNormalEntry(decision, token, pageToken)) return;
                 unknownCount++;
                 status("页面状态待核实（" + unknownCount + "/3），不会据此判断缺货。");
                 if (unknownCount >= 3) {
@@ -652,7 +856,11 @@ public final class MonitorService extends AccessibilityService {
                 }
                 status("发现目标票档信号，正在核实选择。"); break;
             case PROBING:
-                unknownCount = 0; status("目标场次已核实，正在试选票档；库存仍待核实。"); break;
+                unknownCount = 0; status(decision.action == Decision.Action.INCREASE_QUANTITY
+                        ? "已核实当前一张，正在尝试增加至两张；两张库存仍待核实。"
+                        : decision.action == Decision.Action.SELECT_SESSION
+                        ? "正在选择已核实的目标场次，随后重新检查库存；尚未发现有票。"
+                        : "目标场次已核实，正在试选票档；库存仍待核实。"); break;
             case TIER_SELECTED:
                 unknownCount = 0; status("票档、数量及票款已核实，准备进入确认购买页。"); break;
             case OUT_OF_STOCK:
@@ -660,11 +868,45 @@ public final class MonitorService extends AccessibilityService {
             default:
                 unknownCount = 0; status("已识别目标页面，正在检查票档。"); break;
         }
-        if (ActionPacing.mayDispatch(decision, System.currentTimeMillis(), SystemClock.elapsedRealtime(), nextActionAt, actionFailures > 0)) {
+        if (decision.action == Decision.Action.OPEN_TICKETS && !normalTicketEntry(decision.target)
+                && !DetailOcrNavigation.isProposal(decision)) {
+            busy = false; status("当前没有核实到正常购票入口，等待页面变化；不会点击缺货登记或想看。");
+            schedule(observationDelay()); return;
+        }
+        boolean mayDispatch = ActionPacing.mayDispatch(decision, System.currentTimeMillis(), SystemClock.elapsedRealtime(), nextActionAt, actionFailures > 0);
+        if (mayDispatch) {
             act(decision, token, pageToken); return;
         }
         busy = false;
-        schedule(Math.max(MonitorConfig.MIN_INTERVAL_MS, Math.min(config.minIntervalMs, nextActionAt - SystemClock.elapsedRealtime())));
+        long wait = decision.action == Decision.Action.NONE ? observationDelay()
+                : Math.min(observationDelay(), SaleTiming.actionWaitMs(false, SystemClock.elapsedRealtime(), nextActionAt));
+        schedule(Math.max(1, wait));
+    }
+
+    private boolean waitForNormalEntry(Decision decision, long token, long pageToken) {
+        SaleTiming.Tick timing = timingTick();
+        if (config.saleAt == null || timing == null || !timing.mayReadOfficialPage()
+                || !"reservation_selection_only".equals(decision.reason)) return false;
+        unknownCount = 0;
+        // A fresh, exact native reservation label permits one ordinary BACK in PREPARE only.
+        // Never use this recovery on checkout/confirmation pages or infer an available stock.
+        if (!reservationExitAttempted && config.mode == MonitorConfig.Mode.PREPARE
+                && transitionAction == Decision.Action.NONE && liveOrderAttempt == null
+                && readNodes().stream().filter(i -> i.source == UiItem.Source.NODE
+                    && "cn.damai:id/tv_perform_name".equals(i.resourceId) && i.text.equals("预约想看场次")).count() == 1) {
+            reservationExitAttempted = true;
+            store.appendEvent("SALE_TIMING", "reservation_back_to_detail_once", 0);
+            act(new Decision(Decision.State.READY, Decision.Action.BACK, null,
+                    "reservation_back_to_detail_once", decision.observedAtMs), token, pageToken);
+            return true;
+        }
+        busy = false; status("已到设定开售时间，当前仍为预约预选页；等待官方正常购票入口，库存未核实。");
+        schedule(observationDelay()); return true;
+    }
+    private static boolean normalTicketEntry(UiItem target) {
+        if (target == null) return false;
+        String text = target.text.trim();
+        return text.equals("立即购买") || text.equals("立即预订") || text.equals("选座购买") || text.equals("购买");
     }
 
     private boolean orderGrantCurrent() {
@@ -912,6 +1154,45 @@ public final class MonitorService extends AccessibilityService {
         store.appendEvent("ACTION_REQUEST", decision.action.name().toLowerCase(Locale.ROOT)
                 + ":" + target.source.name().toLowerCase(Locale.ROOT) + ":"
                 + target.left + "," + target.top + "," + target.right + "," + target.bottom, 0);
+        if (decision.action == Decision.Action.INCREASE_QUANTITY) {
+            AccessibilityNodeInfo plus = target.source == UiItem.Source.NODE
+                    ? findTarget(getRootInActiveWindow(), target, 0) : null;
+            if (config.quantity != 2 || !QuantityTransition.isIncreaseProposal(decision)
+                    || quantityTransition.pending() || !quantityIncreaseStillOne(plus)) {
+                stop("数量加号与当前真实控件不匹配，已暂停。", "UNKNOWN", "quantity_target_unverified", true); return;
+            }
+            if (AppStore.INPUT_SHIZUKU.equals(inputMode)) dispatchVerifiedLocalTap(decision, plus, token, pageToken);
+            else dispatchVerifiedGesture(decision, plus, "verified_quantity_gesture", token, pageToken);
+            return;
+        }
+        if (decision.action == Decision.Action.OPEN_TICKETS && !normalTicketEntry(target)
+                && !DetailOcrNavigation.isProposal(decision)) {
+            stop("正常购票入口未核实，不会点击登记或想看。", "UNKNOWN", "ticket_entry_not_verified", true); return;
+        }
+        if (DetailOcrNavigation.isProposal(decision)) {
+            // This provider exposes no refreshable native footer leaf. The root is only a fresh
+            // frame/window anchor; the click position remains this exact same-frame OCR footer.
+            AccessibilityNodeInfo anchor = getRootInActiveWindow();
+            if (!detailOcrAnchorSafe(decision, anchor)) {
+                stop("同项目详情的底部导航与当前窗口无法核实，已暂停。", "UNKNOWN", "detail_ocr_anchor_unverified", true); return;
+            }
+            store.appendEvent("ACTION_ROUTE", "verified_detail_ocr_navigation", 0);
+            if (AppStore.INPUT_SHIZUKU.equals(inputMode)) dispatchVerifiedLocalTap(decision, anchor, token, pageToken);
+            else dispatchVerifiedGesture(decision, anchor, "verified_detail_ocr_navigation", token, pageToken);
+            return;
+        }
+        if (decision.action == Decision.Action.SELECT_SESSION) {
+            // Session proposals use the same native-bound SKU container route. Never let a date
+            // OCR rectangle fall through to the generic coordinate-only gesture fallback.
+            AccessibilityNodeInfo cell = target.source == UiItem.Source.OCR
+                    ? findSkuCell(getRootInActiveWindow(), target, 0) : null;
+            if (cell == null || !sessionCellInRegion(cell)) {
+                stop("目标场次与当前原生控件不匹配，已暂停。", "UNKNOWN", "session_target_changed", true); return;
+            }
+            if (AppStore.INPUT_SHIZUKU.equals(inputMode)) dispatchVerifiedLocalTap(decision, cell, token, pageToken);
+            else dispatchVerifiedGesture(decision, cell, "verified_session_gesture", token, pageToken);
+            return;
+        }
         if (target.source == UiItem.Source.NODE) {
             AccessibilityNodeInfo found = findTarget(getRootInActiveWindow(), target, 0);
             if (AppStore.INPUT_SHIZUKU.equals(inputMode)) {
@@ -953,11 +1234,21 @@ public final class MonitorService extends AccessibilityService {
         if (!valid(token, pageToken)) { busy = false; schedule(700); return; }
         // This backend executes only the existing bounded proposals. It adds no order/payment action.
         if (decision.action != Decision.Action.PROBE_TIER && decision.action != Decision.Action.SELECT_TIER
-                && decision.action != Decision.Action.CONFIRM_TIER && decision.action != Decision.Action.OPEN_TICKETS) {
+                && decision.action != Decision.Action.CONFIRM_TIER && decision.action != Decision.Action.OPEN_TICKETS
+                && decision.action != Decision.Action.INCREASE_QUANTITY && decision.action != Decision.Action.SELECT_SESSION) {
             stop("当前动作不支持本地调试输入，已暂停。", "BLOCKED", "local_input_action_rejected", true); return;
         }
         if (node == null || !node.refresh() || !node.isVisibleToUser() || !node.isEnabled()) {
             stop("目标控件已变化，已暂停。", "UNKNOWN", "local_input_target_stale", true); return;
+        }
+        if (DetailOcrNavigation.isProposal(decision) && !detailOcrAnchorSafe(decision, node)) {
+            stop("同项目详情的底部导航与当前窗口无法核实，已暂停。", "UNKNOWN", "detail_ocr_anchor_unverified", true); return;
+        }
+        if (decision.action == Decision.Action.INCREASE_QUANTITY && !quantityIncreaseStillOne(node)) {
+            stop("数量控件已变化，已暂停，不会重复加号。", "UNKNOWN", "quantity_target_unverified", true); return;
+        }
+        if (decision.action == Decision.Action.SELECT_SESSION && !sessionCellInRegion(node)) {
+            stop("场次控件已变化，已暂停。", "UNKNOWN", "session_target_changed", true); return;
         }
         AccessibilityNodeInfo ancestor = node;
         for (int depth = 0; ancestor != null && depth < 50; depth++, ancestor = ancestor.getParent()) {
@@ -982,26 +1273,37 @@ public final class MonitorService extends AccessibilityService {
         if (observedAge < 0 || observedAge >= 3000) { busy = false; schedule(700); return; }
         long dispatchDeadline = SystemClock.elapsedRealtime() + Math.min(2000, 3000 - observedAge);
         int expectedWindowId = node.getWindowId();
+        long expectedBoundary = readBoundaryGeneration;
         inputBridge.tap(decision.target.centerX(), decision.target.centerY(),
-                dispatchDeadline, () -> {
-                    // Revalidate on our main thread after the remote system checks, immediately before input.
-                    long age = System.currentTimeMillis() - decision.observedAtMs;
-                    if (!valid(token, pageToken) || age < 0 || age > 3000 || !node.refresh()
-                            || !node.isVisibleToUser() || !node.isEnabled() || node.getWindowId() != expectedWindowId)
-                        return false;
-                    Rect currentBounds = new Rect(); node.getBoundsInScreen(currentBounds);
-                    android.view.accessibility.AccessibilityWindowInfo currentWindow = node.getWindow();
-                    if (!bounds.equals(currentBounds) || currentWindow == null || !currentWindow.isActive()
-                            || currentWindow.getDisplayId() != android.view.Display.DEFAULT_DISPLAY) return false;
-                    AccessibilityNodeInfo current = node;
-                    for (int depth = 0; current != null && depth < 50; depth++, current = current.getParent()) {
-                        if (Build.VERSION.SDK_INT >= 34 && current.isAccessibilityDataSensitive()) return false;
+                dispatchDeadline, new ShizukuInputBridge.DispatchGuard() {
+                    private Rejection reason = Rejection.NONE;
+                    @Override public Rejection rejection() { return reason; }
+                    @Override public boolean allow() {
+                        // Keep every original final guard. Reasons distinguish the failure without
+                        // interpreting content events as harmless or renewing the OCR timestamp.
+                        reason = localTapRejection(decision, node, bounds, expectedWindowId,
+                                token, pageToken, expectedBoundary);
+                        return reason == Rejection.NONE;
                     }
-                    return current == null;
                 }, result -> {
                     if (!running || token != generation) return;
                     store.appendEvent("LOCAL_INPUT_RESULT", result.code, 0);
                     if (!result.success) {
+                        if (result.guardRejection != Rejection.NONE)
+                            store.appendEvent("LOCAL_INPUT_GUARD", result.guardRejection.code(), 0);
+                        if (InputDispatchPolicy.mayReobserve(decision.action, result.success,
+                                result.outcomeUnknown, result.code, result.guardRejection)) {
+                            // The remote service explicitly returned before starting input. Discard
+                            // this complete proposal; scan will obtain native facts/OCR and decide anew.
+                            busy = false;
+                            if (!inputReadRecovery.retry(SystemClock.elapsedRealtime())) {
+                                stop("点击前页面持续变化，新读取仍未稳定；已暂停，尚未执行该点击。",
+                                        "UNKNOWN", "input_page_unstable", true); return;
+                            }
+                            store.appendEvent("READ_RECOVERY", "input_proposal_discarded", inputReadRecovery.attempts());
+                            status("点击前页面已更新，正在重新读取；不会沿用旧点击位置。");
+                            schedule(inputReadRecovery.delayMs()); return;
+                        }
                         stop("本地输入未能确认完成，已暂停，请检查手机；不会重试该点击。",
                                 result.outcomeUnknown ? "UNKNOWN" : "BLOCKED", "local_input_" + result.code, true);
                         return;
@@ -1011,9 +1313,54 @@ public final class MonitorService extends AccessibilityService {
                 });
     }
 
+    private Rejection localTapRejection(Decision decision, AccessibilityNodeInfo node, Rect bounds,
+                                        int expectedWindowId, long token, long pageToken, long expectedBoundary) {
+        if (!running) return Rejection.MONITOR_STOPPED;
+        if (token != generation) return Rejection.MONITOR_GENERATION_CHANGED;
+        if (pageToken != windowGeneration) return expectedBoundary == readBoundaryGeneration
+                ? Rejection.PAGE_CONTENT_CHANGED : Rejection.PAGE_BOUNDARY_CHANGED;
+        if (!unlocked()) return Rejection.SCREEN_LOCKED;
+        if (!TARGET.equals(foreground())) return Rejection.FOREGROUND_CHANGED;
+        if (!timingPermitsRead()) return Rejection.TIMING_DISALLOWED;
+        long age = System.currentTimeMillis() - decision.observedAtMs;
+        if (age < 0) return Rejection.OBSERVATION_FROM_FUTURE;
+        if (age > 3000) return Rejection.OBSERVATION_STALE;
+        if (!node.refresh()) return Rejection.TARGET_REFRESH_FAILED;
+        if (!node.isVisibleToUser()) return Rejection.TARGET_HIDDEN;
+        if (!node.isEnabled()) return Rejection.TARGET_DISABLED;
+        if (node.getWindowId() != expectedWindowId) return Rejection.TARGET_WINDOW_CHANGED;
+        Rect currentBounds = new Rect(); node.getBoundsInScreen(currentBounds);
+        if (!bounds.equals(currentBounds)) return Rejection.TARGET_BOUNDS_CHANGED;
+        android.view.accessibility.AccessibilityWindowInfo window = node.getWindow();
+        if (window == null) return Rejection.TARGET_WINDOW_MISSING;
+        if (!window.isActive()) return Rejection.TARGET_WINDOW_INACTIVE;
+        if (window.getDisplayId() != android.view.Display.DEFAULT_DISPLAY) return Rejection.TARGET_DISPLAY_CHANGED;
+        if (decision.action == Decision.Action.INCREASE_QUANTITY && !quantityIncreaseStillOne(node))
+            return Rejection.QUANTITY_CHANGED;
+        if (decision.action == Decision.Action.SELECT_SESSION && !sessionCellInRegion(node))
+            return Rejection.TARGET_PATH_UNVERIFIED;
+        if (DetailOcrNavigation.isProposal(decision) && !detailOcrAnchorSafe(decision, node))
+            return Rejection.TARGET_PATH_UNVERIFIED;
+        AccessibilityNodeInfo current = node;
+        for (int depth = 0; current != null && depth < 50; depth++, current = current.getParent()) {
+            if (current.isPassword() || (Build.VERSION.SDK_INT >= 34 && current.isAccessibilityDataSensitive()))
+                return Rejection.SENSITIVE_TARGET;
+        }
+        return current == null ? Rejection.NONE : Rejection.TARGET_PATH_UNVERIFIED;
+    }
+
     private void dispatchVerifiedGesture(Decision decision, AccessibilityNodeInfo node, String route,
                                          long token, long pageToken) {
         if (!valid(token, pageToken)) { busy = false; schedule(700); return; }
+        if (decision.action == Decision.Action.INCREASE_QUANTITY && !quantityIncreaseStillOne(node)) {
+            stop("数量控件已变化，已暂停，不会重复加号。", "UNKNOWN", "quantity_target_unverified", true); return;
+        }
+        if (decision.action == Decision.Action.SELECT_SESSION && !sessionCellInRegion(node)) {
+            stop("场次控件已变化，已暂停。", "UNKNOWN", "session_target_changed", true); return;
+        }
+        if (DetailOcrNavigation.isProposal(decision) && !detailOcrAnchorSafe(decision, node)) {
+            stop("同项目详情的底部导航与当前窗口无法核实，已暂停。", "UNKNOWN", "detail_ocr_anchor_unverified", true); return;
+        }
         int displayId = android.view.Display.DEFAULT_DISPLAY;
         if (node != null) {
             if (!node.refresh() || !node.isVisibleToUser() || !node.isEnabled()) {
@@ -1032,6 +1379,13 @@ public final class MonitorService extends AccessibilityService {
         }
         if (!valid(token, pageToken) || System.currentTimeMillis() - decision.observedAtMs > 3000) {
             busy = false; schedule(700); return;
+        }
+        if (decision.action == Decision.Action.INCREASE_QUANTITY && (displayId != android.view.Display.DEFAULT_DISPLAY
+                || !quantityIncreaseStillOne(node))) {
+            stop("数量控件已变化，已暂停，不会重复加号。", "UNKNOWN", "quantity_target_unverified", true); return;
+        }
+        if (DetailOcrNavigation.isProposal(decision) && !detailOcrAnchorSafe(decision, node)) {
+            stop("同项目详情的底部导航与当前窗口无法核实，已暂停。", "UNKNOWN", "detail_ocr_anchor_unverified", true); return;
         }
         store.appendEvent("ACTION_ROUTE", route + ":display=" + displayId, 0);
         UiItem target = decision.target;
@@ -1060,25 +1414,47 @@ public final class MonitorService extends AccessibilityService {
         if (!running || token != generation) return;
         busy = false;
         if (success) {
+            inputReadRecovery.reset();
             actionFailures = 0;
             engine.recordAction(decision, System.currentTimeMillis());
             store.appendEvent("ACTION", decision.action.name().toLowerCase(Locale.ROOT) + "_dispatched", 0);
             if (decision.action == Decision.Action.CONFIRM_TIER || decision.action == Decision.Action.SELECT_TIER
-                    || decision.action == Decision.Action.PROBE_TIER) {
+                    || decision.action == Decision.Action.PROBE_TIER || decision.action == Decision.Action.INCREASE_QUANTITY
+                    || decision.action == Decision.Action.SELECT_SESSION) {
                 transitionAction = decision.action; transitionAt = SystemClock.elapsedRealtime();
+                if (decision.action == Decision.Action.INCREASE_QUANTITY) {
+                    if (!quantityTransition.begin(decision.selectionEvidence, transitionAt)) {
+                        stop("数量转换无法核实，已暂停，不会重复加号。", "UNKNOWN", "quantity_transition_unverified", true); return;
+                    }
+                    quantityTimeout = () -> {
+                        if (running && token == generation && quantityTransition.pending())
+                            stop("加号后六秒仍未核实两张与票款，已暂停，不会重复加号。", "UNKNOWN", "quantity_transition_unverified", true);
+                    };
+                    handler.postDelayed(quantityTimeout, QuantityTransition.TIMEOUT_MS);
+                }
             }
-            if (decision.action == Decision.Action.BACK || decision.action == Decision.Action.OPEN_TICKETS)
+            if (decision.action == Decision.Action.BACK || (decision.action == Decision.Action.OPEN_TICKETS
+                    && !"verified_return_detail_entry".equals(decision.reason)))
                 lastNavigationAt = System.currentTimeMillis();
         } else {
+            if (decision.action == Decision.Action.INCREASE_QUANTITY) {
+                stop("加号操作未能确认完成，已暂停，不会重复该点击。", "UNKNOWN", "quantity_input_unconfirmed", true); return;
+            }
             actionFailures++; store.appendEvent("ACTION_FAILED", "ui_action_not_dispatched", 0);
             if (actionFailures >= 2) {
                 stop("界面操作连续失败，任务已暂停，请检查手机。", "BLOCKED", "ui_action_failed", true); return;
             }
         }
-        long delay = ThreadLocalRandom.current().nextLong(config.minIntervalMs, config.maxIntervalMs + 1);
-        nextActionAt = SystemClock.elapsedRealtime() + delay;
-        // Observe the result promptly without dispatching another action until its interval is due.
-        schedule(800);
+        // This paired navigation belongs to BACK's existing refresh round; do not start a second
+        // random interval or move the outer refresh anchor forward after entering the selector.
+        if (!(success && decision.action == Decision.Action.OPEN_TICKETS && "verified_return_detail_entry".equals(decision.reason))) {
+            long delay = ThreadLocalRandom.current().nextLong(config.minIntervalMs, config.maxIntervalMs + 1);
+            nextActionAt = SystemClock.elapsedRealtime() + delay;
+        }
+        // Fresh permitted forward steps get prompt readback; trial probes/navigation remain paced.
+        boolean freshForward = success && ActionPacing.mayDispatch(decision, System.currentTimeMillis(),
+                0, Long.MAX_VALUE, false);
+        schedule(freshForward ? SaleTiming.afterForwardInputReadDelayMs() : observationDelay());
     }
 
     private List<UiItem> readNodes() {
@@ -1100,7 +1476,7 @@ public final class MonitorService extends AccessibilityService {
             boolean selected = node.isSelected() || node.isChecked()
                     || (container != null && (container.isSelected() || container.isChecked()));
             String resourceId = node.getViewIdResourceName() == null ? "" : node.getViewIdResourceName();
-            if (!text.isEmpty() || evidenceContainer(resourceId)) items.add(new UiItem(text, rect.left, rect.top, rect.right, rect.bottom,
+            if (!text.isEmpty() || evidenceContainer(resourceId) || quantityEvidenceNode(node)) items.add(new UiItem(text, rect.left, rect.top, rect.right, rect.bottom,
                     node.isEnabled(), container != null, selected, UiItem.Source.NODE, resourceId));
         }
         for (int i = 0; i < node.getChildCount(); i++) collect(node.getChild(i), items, depth + 1);
@@ -1128,6 +1504,62 @@ public final class MonitorService extends AccessibilityService {
                 || id.equals("cn.damai:id/search_v2_suggest_recycler")
                 || id.equals("cn.damai:id/pioneer_homepage_header_search_btn")
                 || id.equals("cn.damai:id/homepage_header_search_layout");
+    }
+
+    private void clearQuantityTransition() {
+        quantityTransition.reset();
+        if (quantityTimeout != null) handler.removeCallbacks(quantityTimeout);
+        quantityTimeout = null;
+    }
+
+    /** Exact native path from historical quantity captures; no arbitrary empty clickable is retained. */
+    private static boolean quantityEvidenceNode(AccessibilityNodeInfo node) {
+        if (node == null) return false;
+        String id = node.getViewIdResourceName();
+        boolean stepperNode = "cn.damai:id/layout_sku_num_ll".equals(id);
+        if (!stepperNode && !"cn.damai:id/img_jia".equals(id) && !"cn.damai:id/img_jian".equals(id)) return false;
+        AccessibilityNodeInfo stepper = stepperNode ? node : node.getParent();
+        if (!nativeShape(stepper, "layout_sku_num_ll", "android.widget.LinearLayout") || stepper.getChildCount() != 3) return false;
+        AccessibilityNodeInfo area = stepper.getParent(), bottom = area == null ? null : area.getParent();
+        if (!nativeShape(area, "layout_num", "android.widget.LinearLayout")) return false;
+        // Damai 9.0.37 on the current vivo has two named bottom-bar wrappers.
+        // Accept this exact observed path, never an arbitrary ancestor search.
+        if (nativeShape(bottom, "id_sku_bottom_bar_action_content", "android.widget.LinearLayout")) {
+            if (!bottom.isEnabled()) return false;
+            AccessibilityNodeInfo wrapper = bottom.getParent();
+            if (!nativeShape(wrapper, "id_sku_bottom_bar_container", "android.widget.FrameLayout")
+                    || !wrapper.isEnabled()) return false;
+            bottom = wrapper.getParent();
+        }
+        if (!nativeShape(bottom, "bottom_layout", "android.widget.LinearLayout")) return false;
+        if (!stepper.isEnabled() || !area.isEnabled() || !bottom.isEnabled()) return false;
+        AccessibilityNodeInfo minus = stepper.getChild(0), count = stepper.getChild(1), plus = stepper.getChild(2);
+        if (!nativeShape(minus, "img_jian", "android.widget.ImageView") || !blankNode(minus)
+                || !nativeShape(count, "tv_num", "android.widget.TextView")
+                || !nativeShape(plus, "img_jia", "android.widget.ImageView") || !blankNode(plus)) return false;
+        Rect parentBounds = new Rect(), bounds = new Rect(); stepper.getBoundsInScreen(parentBounds); node.getBoundsInScreen(bounds);
+        return parentBounds.contains(bounds) && !bounds.isEmpty();
+    }
+    private static boolean quantityIncreaseStillOne(AccessibilityNodeInfo plus) {
+        if (plus == null || !plus.refresh() || !"cn.damai:id/img_jia".equals(plus.getViewIdResourceName())
+                || !plus.isEnabled() || !plus.isClickable() || !quantityEvidenceNode(plus)) return false;
+        AccessibilityNodeInfo stepper = plus.getParent();
+        AccessibilityNodeInfo count = stepper.getChild(1), minus = stepper.getChild(0);
+        if (count == null || count.getText() == null || !count.getText().toString().replaceAll("\\s+", "").equals("1张")
+                || minus == null || minus.isEnabled()) return false;
+        AccessibilityNodeInfo ancestor = plus;
+        for (int depth=0; ancestor != null && depth<50; depth++, ancestor=ancestor.getParent())
+            if (ancestor.isPassword() || (Build.VERSION.SDK_INT>=34 && ancestor.isAccessibilityDataSensitive())) return false;
+        return ancestor == null;
+    }
+    private static boolean nativeShape(AccessibilityNodeInfo node, String id, String type) {
+        return node != null && node.isVisibleToUser() && (Build.VERSION.SDK_INT < 34 || !node.isAccessibilityDataSensitive())
+                && !node.isPassword() && TARGET.contentEquals(node.getPackageName() == null ? "" : node.getPackageName())
+                && ("cn.damai:id/" + id).equals(node.getViewIdResourceName()) && type.contentEquals(node.getClassName() == null ? "" : node.getClassName());
+    }
+    private static boolean blankNode(AccessibilityNodeInfo node) {
+        return (node.getText() == null || node.getText().toString().trim().isEmpty())
+                && (node.getContentDescription() == null || node.getContentDescription().toString().trim().isEmpty());
     }
 
     private AccessibilityNodeInfo findTarget(AccessibilityNodeInfo node, UiItem target, int depth) {
@@ -1159,6 +1591,32 @@ public final class MonitorService extends AccessibilityService {
             if (match != null) return match;
         }
         return null;
+    }
+
+    private static boolean sessionCellInRegion(AccessibilityNodeInfo node) {
+        if (node == null || !node.refresh() || !node.isVisibleToUser() || !node.isEnabled()) return false;
+        AccessibilityNodeInfo ancestor = node;
+        Rect bounds = new Rect(); node.getBoundsInScreen(bounds);
+        for (int depth = 0; ancestor != null && depth < 8; depth++, ancestor = ancestor.getParent()) {
+            if (ancestor.isPassword() || (Build.VERSION.SDK_INT >= 34 && ancestor.isAccessibilityDataSensitive())) return false;
+            if ("cn.damai:id/project_detail_perform_flowlayout".equals(ancestor.getViewIdResourceName())) {
+                Rect area = new Rect(); ancestor.getBoundsInScreen(area);
+                return ancestor.isVisibleToUser() && ancestor.isEnabled() && area.contains(bounds);
+            }
+        }
+        return false;
+    }
+
+    private boolean detailOcrAnchorSafe(Decision decision, AccessibilityNodeInfo root) {
+        if (!DetailOcrNavigation.isProposal(decision) || root == null || !root.refresh()
+                || !root.isVisibleToUser() || !root.isEnabled() || root.isPassword()
+                || !TARGET.contentEquals(root.getPackageName() == null ? "" : root.getPackageName())
+                || (Build.VERSION.SDK_INT >= 34 && root.isAccessibilityDataSensitive()) || root.getParent() != null) return false;
+        android.view.accessibility.AccessibilityWindowInfo window = root.getWindow();
+        if (window == null || !window.isActive() || window.getDisplayId() != android.view.Display.DEFAULT_DISPLAY
+                || root.getWindowId() != currentReadWindow()) return false;
+        Rect bounds = new Rect(); root.getBoundsInScreen(bounds);
+        return DetailOcrNavigation.footerContained(decision, bounds.left, bounds.top, bounds.right, bounds.bottom);
     }
 
     /** Text often sits inside a clickable tile; never climb into a screen-sized container. */

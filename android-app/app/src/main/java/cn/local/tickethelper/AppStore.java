@@ -69,13 +69,23 @@ public final class AppStore {
         MonitorConfig.Mode mode;
         try { mode = MonitorConfig.Mode.valueOf(prefs.getString("mode", "ALERT")); }
         catch (Exception ignored) { mode = MonitorConfig.Mode.ALERT; }
+        Instant saleAt = null;
+        try { saleAt = Instant.parse(prefs.getString("timing_sale_at", "")); }
+        catch (Exception ignored) { /* An unspecified sale time means monitor now, never infer a date. */ }
         return new MonitorConfig(prefs.getString("event", ""), prefs.getString("city", ""),
                 prefs.getString("date", ""), prefs.getString("time", ""), prices,
                 prefs.getInt("quantity", 1), prefs.getInt("maxTotal", 0), deadline,
-                prefs.getLong("minIntervalMs", 5000L), prefs.getLong("maxIntervalMs", 10000L), mode);
+                prefs.getLong("minIntervalMs", 5000L), prefs.getLong("maxIntervalMs", 10000L), mode,
+                saleAt, prefs.getInt("timing_follow_up_minutes", 0));
     }
 
     public void saveConfig(MonitorConfig config) {
+        // Legacy mode/rhythm screens still call the old constructor. They must not accidentally
+        // erase an explicit same-session schedule or carry it into a different event/session.
+        synchronized (LOCK) { saveResolvedConfig(config.resolveLegacyTiming(loadConfig())); }
+    }
+
+    private void saveResolvedConfig(MonitorConfig config) {
         JSONArray prices = new JSONArray();
         for (Integer price : config.prices) prices.put(price);
         synchronized (LOCK) { prefs.edit().putString("event", config.eventKeyword).putString("city", config.city)
@@ -84,8 +94,26 @@ public final class AppStore {
                 .putInt("maxTotal", config.maxTotal)
                 .putString("deadline", config.deadline == null ? "" : config.deadline.toString())
                 .putLong("minIntervalMs", config.minIntervalMs).putLong("maxIntervalMs", config.maxIntervalMs)
+                .putString("timing_sale_at", config.saleAt == null ? "" : config.saleAt.toString())
+                .putInt("timing_follow_up_minutes", config.followUpMinutes)
                 .putString("mode", config.mode.name()).putBoolean("armed", false)
                 .putLong("config_revision", prefs.getLong("config_revision", 0) + 1).apply(); }
+    }
+
+    /** Explicit local edit only. Callers pause the service before saving; nothing auto-starts. */
+    public MonitorConfig saveTiming(Instant saleAt, int followUpMinutes, boolean useFastRhythm, long expectedRevision) {
+        synchronized (LOCK) {
+            if (prefs.getLong("config_revision",0)!=expectedRevision)
+                throw new IllegalArgumentException("目标已变化，请返回计划后重新打开时间设置。");
+            MonitorConfig old = loadConfig();
+            MonitorConfig changed = new MonitorConfig(old.eventKeyword,old.city,old.date,old.time,
+                    old.prices,old.quantity,old.maxTotal,old.deadline,
+                    useFastRhythm?500:old.minIntervalMs,useFastRhythm?1500:old.maxIntervalMs,
+                    old.mode,saleAt,followUpMinutes);
+            List<String> errors = changed.validate();
+            if (!errors.isEmpty()) throw new IllegalArgumentException(String.join("\n",errors));
+            saveResolvedConfig(changed); return changed;
+        }
     }
 
     public long getConfigRevision() { return prefs.getLong("config_revision", 0); }
@@ -106,6 +134,7 @@ public final class AppStore {
                     .putString("prices", prices.toString()).putInt("quantity", 1).putInt("maxTotal", config.maxTotal)
                     .putString("deadline", config.deadline == null ? "" : config.deadline.toString())
                     .putLong("minIntervalMs", config.minIntervalMs).putLong("maxIntervalMs", config.maxIntervalMs)
+                    .remove("timing_sale_at").remove("timing_follow_up_minutes")
                     .putString("mode", config.mode.name()).putBoolean("armed", false)
                     .putBoolean("imported_target_pending_review", true)
                     .putString("viewer_display_name", "").putString("viewer_document_suffix", "")
@@ -142,6 +171,7 @@ public final class AppStore {
                     .putString("prices", prices.toString()).putInt("quantity", config.quantity)
                     .putInt("maxTotal", config.maxTotal).putString("deadline", config.deadline.toString())
                     .putLong("minIntervalMs", config.minIntervalMs).putLong("maxIntervalMs", config.maxIntervalMs)
+                    .remove("timing_sale_at").remove("timing_follow_up_minutes")
                     .putString("mode", config.mode.name()).putBoolean("armed", false)
                     .putString("viewer_display_name", "").putString("viewer_document_suffix", "")
                     .remove("viewer_bindings_json")

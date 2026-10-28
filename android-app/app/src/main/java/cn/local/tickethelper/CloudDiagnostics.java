@@ -417,6 +417,33 @@ public final class CloudDiagnostics {
         }
     }
     private static Mapped mapWithReason(String name, String detail) {
+        // Timing is a local scheduler fact, never evidence of official sale or inventory.
+        if ("SALE_TIMING".equals(name)) {
+            DiagnosticReport.Code code;
+            if (detail == null || detail.length() > 64) return null;
+            switch (detail) {
+                case "waiting_for_sale": code = DiagnosticReport.Code.SALE_WAITING; break;
+                case "opening": code = DiagnosticReport.Code.SALE_OPENING; break;
+                case "monitoring": code = DiagnosticReport.Code.SALE_MONITORING; break;
+                case "stopped": code = DiagnosticReport.Code.SALE_STOPPED; break;
+                case "reservation_back_to_detail_once": code = DiagnosticReport.Code.SALE_RESERVATION_REENTRY; break;
+                default: return null;
+            }
+            return new Mapped(null, DiagnosticReport.Tag.MONITOR, code);
+        }
+        // A local scroll proposal/completion establishes neither a settled page nor stock/order facts.
+        if ("DETAIL_SETTLE".equals(name)) {
+            if ("scroll_proposed_once".equals(detail))
+                return new Mapped(null, DiagnosticReport.Tag.INPUT, DiagnosticReport.Code.DETAIL_SCROLL_PROPOSED);
+            if ("scroll_command_completed".equals(detail))
+                return new Mapped(null, DiagnosticReport.Tag.INPUT, DiagnosticReport.Code.DETAIL_SCROLL_COMMAND_COMPLETED);
+            return null;
+        }
+        // A dispatch callback does not establish selected quantity or an accepted order.
+        if ("ACTION".equals(name)) {
+            return "increase_quantity_dispatched".equals(detail)
+                    ? new Mapped(null, DiagnosticReport.Tag.INPUT, DiagnosticReport.Code.QUANTITY_INCREASE_DISPATCHED) : null;
+        }
         if ("READ_RECOVERY".equals(name)) {
             if ("read_recovery_waiting".equals(detail)) return new Mapped(null, DiagnosticReport.Tag.MONITOR, DiagnosticReport.Code.READ_RETRY);
             if ("read_content_revalidated".equals(detail)) return new Mapped(null, DiagnosticReport.Tag.MONITOR, DiagnosticReport.Code.READ_RECOVERED);
@@ -439,6 +466,14 @@ public final class CloudDiagnostics {
                 return DiagnosticReport.Code.READ_FAILED;
         }
         switch (detail) {
+            case "detail_scroll_anchor_unverified": return "UNKNOWN".equals(state) || "BLOCKED".equals(state)
+                    ? DiagnosticReport.Code.DETAIL_SCROLL_ANCHOR_UNVERIFIED : null;
+            case "detail_scroll_input_unconfirmed": return "UNKNOWN".equals(state) || "BLOCKED".equals(state)
+                    ? DiagnosticReport.Code.DETAIL_SCROLL_INPUT_UNCONFIRMED : null;
+            case "quantity_target_unverified": return "UNKNOWN".equals(state) ? DiagnosticReport.Code.QUANTITY_TARGET_UNVERIFIED : null;
+            case "quantity_transition_page_changed": return "UNKNOWN".equals(state) ? DiagnosticReport.Code.QUANTITY_TRANSITION_PAGE_CHANGED : null;
+            case "quantity_transition_unverified": return "UNKNOWN".equals(state) ? DiagnosticReport.Code.QUANTITY_TRANSITION_UNVERIFIED : null;
+            case "quantity_input_unconfirmed": return "UNKNOWN".equals(state) ? DiagnosticReport.Code.QUANTITY_INPUT_UNCONFIRMED : null;
             case "reservation_selection_only": return DiagnosticReport.Code.RESERVATION_ONLY;
             case "page_changed_during_read": case "unstable_page": case "empty_page": case "missing_observation":
             case "native_error_page": case "stale_or_future_observation": case "target_prices_not_readable":

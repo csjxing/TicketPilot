@@ -26,9 +26,20 @@ public final class Observation {
         public final long observedAtMs;
         public final String date, time;
         public final Integer selectedPrice, quantity, totalYuan;
-        public final UiItem confirmTarget;
+        public final UiItem confirmTarget, quantityIncreaseTarget;
+        /** Explicit negative label on the same-frame, uniquely verified selected session. */
+        public final boolean sessionUnavailable;
         public VerifiedSelection(long observedAtMs, String date, String time, Integer selectedPrice,
                                  Integer quantity, Integer totalYuan, UiItem confirmTarget) {
+            this(observedAtMs, date, time, selectedPrice, quantity, totalYuan, confirmTarget, null);
+        }
+        public VerifiedSelection(long observedAtMs, String date, String time, Integer selectedPrice,
+                                 Integer quantity, Integer totalYuan, UiItem confirmTarget, UiItem quantityIncreaseTarget) {
+            this(observedAtMs, date, time, selectedPrice, quantity, totalYuan, confirmTarget, quantityIncreaseTarget, false);
+        }
+        public VerifiedSelection(long observedAtMs, String date, String time, Integer selectedPrice,
+                                 Integer quantity, Integer totalYuan, UiItem confirmTarget, UiItem quantityIncreaseTarget,
+                                 boolean sessionUnavailable) {
             this.observedAtMs = observedAtMs;
             this.date = date == null ? "" : date;
             this.time = time == null ? "" : time;
@@ -36,6 +47,8 @@ public final class Observation {
             this.quantity = quantity;
             this.totalYuan = totalYuan;
             this.confirmTarget = confirmTarget;
+            this.quantityIncreaseTarget = quantityIncreaseTarget;
+            this.sessionUnavailable = sessionUnavailable;
         }
     }
 }

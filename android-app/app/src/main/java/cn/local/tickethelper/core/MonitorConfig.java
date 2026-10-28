@@ -3,6 +3,8 @@ package cn.local.tickethelper.core;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -12,6 +14,7 @@ import java.util.List;
 /** Local user settings. Money is expressed in whole yuan. */
 public final class MonitorConfig {
     public static final int MIN_INTERVAL_MS = 500, MAX_INTERVAL_MS = 600000;
+    public static final int MAX_FOLLOW_UP_MINUTES = 1440;
     public enum Mode { ALERT, PREPARE, LOCK_ORDER }
     public final String eventKeyword, city, date, time;
     public final List<Integer> prices;
@@ -19,10 +22,30 @@ public final class MonitorConfig {
     public final Instant deadline;
     public final long minIntervalMs, maxIntervalMs;
     public final Mode mode;
+    /** Explicit local schedule; null/zero preserves the legacy deadline-only behavior. */
+    public final Instant saleAt;
+    public final int followUpMinutes;
+    public final boolean timingSpecified;
 
     public MonitorConfig(String eventKeyword, String city, String date, String time,
                          List<Integer> prices, int quantity, int maxTotal, Instant deadline,
                          long minIntervalMs, long maxIntervalMs, Mode mode) {
+        this(eventKeyword, city, date, time, prices, quantity, maxTotal, deadline,
+                minIntervalMs, maxIntervalMs, mode, null, 0, false);
+    }
+
+    public MonitorConfig(String eventKeyword, String city, String date, String time,
+                         List<Integer> prices, int quantity, int maxTotal, Instant deadline,
+                         long minIntervalMs, long maxIntervalMs, Mode mode, Instant saleAt,
+                         int followUpMinutes) {
+        this(eventKeyword, city, date, time, prices, quantity, maxTotal, deadline,
+                minIntervalMs, maxIntervalMs, mode, saleAt, followUpMinutes, true);
+    }
+
+    private MonitorConfig(String eventKeyword, String city, String date, String time,
+                          List<Integer> prices, int quantity, int maxTotal, Instant deadline,
+                          long minIntervalMs, long maxIntervalMs, Mode mode, Instant saleAt,
+                          int followUpMinutes, boolean timingSpecified) {
         this.eventKeyword = clean(eventKeyword);
         this.city = clean(city);
         this.date = clean(date);
@@ -34,12 +57,34 @@ public final class MonitorConfig {
         this.minIntervalMs = minIntervalMs;
         this.maxIntervalMs = maxIntervalMs;
         this.mode = mode;
+        this.saleAt = saleAt;
+        this.followUpMinutes = followUpMinutes;
+        this.timingSpecified = timingSpecified;
     }
 
     private static String clean(String s) { return s == null ? "" : s.trim(); }
 
     /** Final order submission is separately authorized and never performed by the SKU engine. */
     public boolean canPreparePurchase() { return mode == Mode.PREPARE || mode == Mode.LOCK_ORDER; }
+
+    public MonitorConfig withTiming(Instant saleAt, int followUpMinutes) {
+        return new MonitorConfig(eventKeyword, city, date, time, prices, quantity, maxTotal,
+                deadline, minIntervalMs, maxIntervalMs, mode, saleAt, followUpMinutes);
+    }
+
+    /** Older screens omit new schedule fields; retain them only for the identical event/session. */
+    public MonitorConfig resolveLegacyTiming(MonitorConfig previous) {
+        if (timingSpecified || previous==null || !eventKeyword.equals(previous.eventKeyword)
+                || !city.equals(previous.city) || !date.equals(previous.date) || !time.equals(previous.time)) return this;
+        return withTiming(previous.saleAt,previous.followUpMinutes);
+    }
+
+    /** All current events are in China; never interpret a phone's travel time zone as the venue. */
+    public Instant eventStartsAt() {
+        try { return LocalDateTime.of(LocalDate.parse(date), LocalTime.parse(time))
+                .atZone(ZoneId.of("Asia/Shanghai")).toInstant(); }
+        catch (RuntimeException invalid) { return null; }
+    }
 
     public List<String> validate() {
         List<String> errors = new ArrayList<>();
@@ -65,6 +110,16 @@ public final class MonitorConfig {
         if (minIntervalMs < MIN_INTERVAL_MS || maxIntervalMs < minIntervalMs || maxIntervalMs > MAX_INTERVAL_MS)
             errors.add("操作间隔须介于 0.5 秒与 10 分钟，最大值不能小于最小值");
         if (mode == null) errors.add("请选择提醒、准备或锁单模式");
+        if (followUpMinutes < 0 || followUpMinutes > MAX_FOLLOW_UP_MINUTES)
+            errors.add("持续监控时长应为 0 至 1440 分钟，0 表示沿用停止时间");
+        if (saleAt != null) {
+            try {
+                saleAt.toEpochMilli();
+                Instant eventStart = eventStartsAt();
+                if (eventStart != null && !saleAt.isBefore(eventStart)) errors.add("开售时间必须早于演出时间");
+                if (deadline != null && !saleAt.isBefore(deadline)) errors.add("停止时间必须晚于开售时间");
+            } catch (ArithmeticException invalid) { errors.add("开售时间超出有效范围"); }
+        }
         return Collections.unmodifiableList(errors);
     }
 }
