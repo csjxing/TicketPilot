@@ -43,12 +43,23 @@ public final class TimingActivity extends Activity {
     private TextView preview,error;
     private Button dateButton,timeButton;
     private LocalDateTime saleDateTime;
+    private boolean hasOpeningTime;
+    private long saleReadId;
+    private final android.os.Handler uiHandler=new android.os.Handler(android.os.Looper.getMainLooper());
+    private AlertDialog readDialog;
+    private final Runnable readUpdate=new Runnable(){@Override public void run(){showReadResult();if(saleReadId!=0)uiHandler.postDelayed(this,400);}};
+    private TextView readStatus;
+    private Button cancelRead;
 
     @Override public void onCreate(Bundle saved) {
         super.onCreate(saved);store=new AppStore(this);
         pause("正在设置开售与持续监控时间，监控保持暂停。");
-        config=store.loadConfig();revision=store.getConfigRevision();
+        config=store.loadConfig();revision=store.getConfigRevision();hasOpeningTime=config.saleAt!=null;
         saleDateTime=(config.saleAt==null?Instant.now():config.saleAt).atZone(CHINA).toLocalDateTime();
+        if(saved!=null && saved.getLong("revision",-1)==revision) {
+            saleReadId=saved.getLong("saleReadId",0);hasOpeningTime=saved.getBoolean("hasOpeningTime",hasOpeningTime);
+            saleDateTime=Instant.ofEpochMilli(saved.getLong("draftTime",saleDateTime.atZone(CHINA).toInstant().toEpochMilli())).atZone(CHINA).toLocalDateTime();
+        }
         ScrollView scroll=new ScrollView(this);body=column();body.setPadding(dp(24),dp(24),dp(24),dp(32));scroll.addView(body);
         scroll.setBackgroundColor(Color.rgb(247,248,252));setContentView(scroll);
         getWindow().getDecorView().setOnApplyWindowInsetsListener((v,insets)->{
@@ -59,10 +70,17 @@ public final class TimingActivity extends Activity {
         text(body,"开售前准备好，开售后持续关注。有票后的动作仍按当前模式执行。",15,MUTED,false);
 
         LinearLayout when=card();text(when,"什么时候开始核查？",20,INK,true);
+        button(when,"从大麦读取开售时间",true,this::readOpening);
+        readStatus=text(when,hasOpeningTime?"开售 "+saleDateTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss")):"打开大麦显示开售时间的预约场次页，读取后只需确认。",13,MUTED,false);
+        cancelRead=button(when,"停止本次读取",false,()->{SaleTimeCapture.cancel(saleReadId);saleReadId=0;cancelRead.setVisibility(View.GONE);readStatus.setText("已停止读取，原计划未更改。");});
+        cancelRead.setVisibility(View.GONE);
         startModes=new RadioGroup(this);nowMode=choice("现在开始，立即核查");scheduledMode=choice("等待官方开售时间");
         startModes.addView(nowMode);startModes.addView(scheduledMode);when.addView(startModes);
         openingFields=column();when.addView(openingFields);
-        dateButton=button(openingFields,"",false,this::pickDate);timeButton=button(openingFields,"",false,this::pickTime);
+        LinearLayout manual=column();
+        button(openingFields,"手动调整（备用）",false,()->manual.setVisibility(manual.getVisibility()==View.VISIBLE?View.GONE:View.VISIBLE));
+        openingFields.addView(manual);manual.setVisibility(View.GONE);
+        dateButton=button(manual,"",false,this::pickDate);timeButton=button(manual,"",false,this::pickTime);
         text(openingFields,"启动后，大麦上会显示开票倒计时。跟随手机系统时间；建议开启系统自动日期和时间。毫秒显示不代表服务器校时或下单保证。",12,MUTED,false);
 
         LinearLayout duration=card();text(duration,"持续关注多久？",20,INK,true);
@@ -92,9 +110,14 @@ public final class TimingActivity extends Activity {
             @Override public void afterTextChanged(android.text.Editable value){}
         });
         startModes.check(config.saleAt==null?nowMode.getId():scheduledMode.getId());refreshDateButtons();refreshPreview();
+        if(saved!=null && saved.getLong("revision",-1)==revision) {
+            startModes.check(saved.getBoolean("scheduled")?scheduledMode.getId():nowMode.getId());
+            minutes.setText(saved.getString("minutes",minutes.getText().toString()));fast.setChecked(saved.getBoolean("fast"));
+        }
     }
     private void save() {
         try {
+            if(scheduledMode.isChecked() && !hasOpeningTime) throw new IllegalArgumentException("请先从大麦读取并确认开售时间，或使用备用调整。");
             int follow=readMinutes();Instant sale=scheduledMode.isChecked()?saleDateTime.atZone(CHINA).toInstant():null;
             pause("时间设置已保存，请重新开始监控。");
             store.saveTiming(sale,follow,fast.isChecked(),revision);
@@ -114,22 +137,75 @@ public final class TimingActivity extends Activity {
         if(preview==null)return;
         try {
             int follow=readMinutes();Instant sale=scheduledMode.isChecked()?saleDateTime.atZone(CHINA).toInstant():null;
-            String start=sale==null?"现在开始核查":sale.isAfter(Instant.now())?"等待 "+saleDateTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss.SSS"))+" 开售":"设定开售时间已到，从本次启动核查";
+            String start=scheduledMode.isChecked() && !hasOpeningTime?"先从大麦读取开售时间":sale==null?"现在开始核查":sale.isAfter(Instant.now())?"等待 "+saleDateTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss.SSS"))+" 开售":"设定开售时间已到，从本次启动核查";
             MonitorConfig planned=config.withTiming(sale,follow);
             long stop=SaleTiming.effectiveStopAtMs(planned,System.currentTimeMillis());
             preview.setText(start+"\n"+(follow==0?"沿用原停止时间": "持续关注 "+follow+" 分钟")+"\n最迟停止 "+Instant.ofEpochMilli(stop).atZone(CHINA).format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss.SSS")));
         } catch(RuntimeException invalid){preview.setText("填好时间后，这里会显示本次计划。");}
     }
+    private void readOpening() {
+        if(store.getConfigRevision()!=revision){error.setText("计划已变化，请返回后重新打开时间设置。");return;}
+        MonitorService service=MonitorService.instance;
+        if(service==null || !service.isConnectionReady()) { error.setText("请先连接页面读取服务。");return; }
+        android.content.Intent launch=getPackageManager().getLaunchIntentForPackage("cn.damai");
+        if(launch==null){error.setText("未找到大麦，请先打开大麦目标详情。");return;}
+        saleReadId=SaleTimeCapture.start(service,config,revision);readStatus.setText(SaleTimeCapture.get(saleReadId).status);
+        try {startActivity(launch);} catch(RuntimeException unavailable) {
+            SaleTimeCapture.cancel(saleReadId);saleReadId=0;error.setText("暂时无法打开大麦，请稍后重试。");
+        }
+    }
+    @Override protected void onResume() {
+        super.onResume();uiHandler.removeCallbacks(readUpdate);uiHandler.post(readUpdate);
+    }
+    @Override protected void onPause() {
+        uiHandler.removeCallbacks(readUpdate);
+        if(readDialog!=null){readDialog.dismiss();readDialog=null;}
+        super.onPause();
+    }
+    @Override public void finish() {SaleTimeCapture.cancel(saleReadId);saleReadId=0;super.finish();}
+    @Override protected void onSaveInstanceState(Bundle out) {
+        out.putLong("saleReadId",saleReadId);out.putLong("revision",revision);out.putBoolean("hasOpeningTime",hasOpeningTime);
+        out.putLong("draftTime",saleDateTime.atZone(CHINA).toInstant().toEpochMilli());
+        out.putBoolean("scheduled",scheduledMode.isChecked());out.putString("minutes",minutes.getText().toString());out.putBoolean("fast",fast.isChecked());
+        super.onSaveInstanceState(out);
+    }
+    private void showReadResult() {
+        if(cancelRead!=null)cancelRead.setVisibility(saleReadId==0?View.GONE:View.VISIBLE);
+        if(saleReadId==0 || readStatus==null || readDialog!=null)return;
+        SaleTimeCapture.Result result=SaleTimeCapture.get(saleReadId);
+        if(result==null){saleReadId=0;cancelRead.setVisibility(View.GONE);readStatus.setText("读取已结束，打开大麦目标详情后可重新读取。");return;}
+        readStatus.setText(result.status);
+        if(result.waiting)return;
+        if(!result.usable(store.getConfigRevision(),android.os.SystemClock.elapsedRealtime(),System.currentTimeMillis())) {
+            if(result.value!=null)readStatus.setText("时间结果已过期或计划已变化，请重新读取。");
+            SaleTimeCapture.cancel(saleReadId);saleReadId=0;cancelRead.setVisibility(View.GONE);return;
+        }
+        Instant captured=result.value;
+        readDialog=new AlertDialog.Builder(this).setTitle("确认开售时间")
+                .setMessage(config.eventKeyword+" · "+config.city+"\n演出场次 "+config.date+" "+config.time+"\n开售 "+captured.atZone(CHINA).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))+" 北京时间")
+                .setNegativeButton("取消",(d,w)->{SaleTimeCapture.cancel(saleReadId);saleReadId=0;})
+                .setOnCancelListener(d->{SaleTimeCapture.cancel(saleReadId);saleReadId=0;})
+                .setPositiveButton("使用这个时间",(d,w)->{
+                    if(!result.usable(store.getConfigRevision(),android.os.SystemClock.elapsedRealtime(),System.currentTimeMillis())) {
+                        error.setText("时间结果已过期或计划已变化，请重新读取。");return;
+                    }
+                    hasOpeningTime=true;saleDateTime=captured.atZone(CHINA).toLocalDateTime();scheduledMode.setChecked(true);
+                    readStatus.setText("开售 "+saleDateTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss"))+"，保存后生效。");
+                    SaleTimeCapture.cancel(saleReadId);saleReadId=0;refreshDateButtons();refreshPreview();
+                }).create();
+        readDialog.setOnDismissListener(d->readDialog=null);readDialog.show();
+    }
     private void pickDate(){new DatePickerDialog(this,(v,y,m,d)->{saleDateTime=saleDateTime.withDayOfMonth(1).withYear(y).withMonth(m+1).withDayOfMonth(d);refreshDateButtons();refreshPreview();},saleDateTime.getYear(),saleDateTime.getMonthValue()-1,saleDateTime.getDayOfMonth()).show();}
     private void pickTime() {
-        EditText input=new EditText(this);input.setSingleLine(true);input.setInputType(InputType.TYPE_CLASS_DATETIME);
+        EditText input=new EditText(this);input.setSingleLine(true);input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS);
+        input.setKeyListener(android.text.method.DigitsKeyListener.getInstance("0123456789:."));
         input.setText(OpeningTime.format(saleDateTime.toLocalTime()));input.setSelectAllOnFocus(true);
         AlertDialog dialog=new AlertDialog.Builder(this).setTitle("北京时间 HH:mm:ss.SSS")
                 .setMessage("例如 15:00:00.000。毫秒是本机计划精度，不代表服务器同步或保证入场速度。")
                 .setView(input).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
         dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{
             try {
-                saleDateTime=java.time.LocalDateTime.of(saleDateTime.toLocalDate(),OpeningTime.parse(input.getText().toString().trim()));
+                saleDateTime=java.time.LocalDateTime.of(saleDateTime.toLocalDate(),OpeningTime.parse(input.getText().toString().trim()));hasOpeningTime=true;
                 refreshDateButtons();refreshPreview();dialog.dismiss();
             } catch(RuntimeException invalid){input.setError("请输入有效时间，例如 15:00:00.000");}
         }));dialog.show();

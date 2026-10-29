@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-30 v0.3.8-preview / code35: read opening time from Damai
+
+Timing settings now lead with “从大麦读取开售时间”. Manual date/time controls are collapsed as a fallback. This explicit local read stays paused, waits at most two minutes while the user navigates to the target session, and can be cancelled. Native labels are tried first, then bundled local OCR with foreground/window-boundary checks. Only a timestamp and fixed status remain; no page content or screenshot is persisted or sent to a model. A captured draft must match the current plan revision, remain fresh, and be confirmed before it is filled into the settings; saving still does not start monitoring.
+
+Opening labels are scoped to the configured project and exact performance session in the observed Damai reservation layout. Split OCR labels can be read within that scope; search results, other sessions, ambiguous/expired times and private/checkout pages are rejected. Unrecognized layouts or absent labels remain unreadable, rather than inventing a time. A missing year uses the current China year without rollover and the full result is shown for confirmation. This is not server-clock synchronization or a millisecond order guarantee.
+
+Live code34 installation hash matched its release candidate. The prior backup timestamp input stripped the decimal separator; the backup keyboard now explicitly permits digits, colon and decimal. The earlier temporary countdown test was already past before a monitor run could begin, so overlay display is not claimed verified. The original immediate-start/follow-up-zero plan was restored through UI and remains paused. Code35 import UI/device validation and production automatic checkout remain pending. Final candidate checks passed: 766 unit tests, no failures/errors, Lint and APK build. Release and installation receipts are tracked separately.
+
 ## code34 delivery and validation checkpoint
 
 Final v0.3.7 build passed: 752 unit tests, no failures/errors, Lint and assembleDebug successful. Source commit 91b6773 is pushed to main. Same-signature APK/source ZIP/manifest prepared under exports/release-v0.3.7-preview; public release upload remains unverified/incomplete. Wireless cover installation was sent; current vivo screen is the system install confirmation, user confirmation pending. Countdown overlay rendering, opening removal and pause cleanup on device are not yet verified. Do not call these passed on the basis of the build. No monitor was armed or second test order submitted.

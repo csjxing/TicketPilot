@@ -1,5 +1,11 @@
 # TicketPilot · 票务助手 Android · v0.2.8-preview / code25 已发布
 
+## 从大麦读取开售时间
+
+在“我的 → 开售与回流票”点“从大麦读取开售时间”，打开当前计划对应的大麦场次页。助手会在本机读取该场次的开售标签，读到后回助手确认并保存，无需输入毫秒。手动调整保留在折叠的备用入口。等待最多两分钟，可主动停止；不支持的页面会说明未读取，不猜时间，也不会因为读取或保存而开始监控。
+
+当前支持范围与真机结果见 [验收记录](VALIDATION.md)。
+
 ## 2026-10-29 v0.3.6-preview / code33: remove duplicated pacing
 
 Screenshot pacing now waits only the remainder of the existing 400ms capture cadence; time already spent recognizing the first frame counts toward the second-read wait. The platform cadence, two independent full reads, page/identity/geometry checks and freshness limits are unchanged. The same reader timestamp also paces ordinary monitor and verification captures.

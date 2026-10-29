@@ -1,5 +1,13 @@
 # Android 构建与真机验收
 
+## 2026-10-30 v0.3.8-preview / code35: read opening time from Damai
+
+Timing settings now lead with “从大麦读取开售时间”. Manual date/time controls are collapsed as a fallback. This explicit local read stays paused, waits at most two minutes while the user navigates to the target session, and can be cancelled. Native labels are tried first, then bundled local OCR with foreground/window-boundary checks. Only a timestamp and fixed status remain; no page content or screenshot is persisted or sent to a model. A captured draft must match the current plan revision, remain fresh, and be confirmed before it is filled into the settings; saving still does not start monitoring.
+
+Opening labels are scoped to the configured project and exact performance session in the observed Damai reservation layout. Split OCR labels can be read within that scope; search results, other sessions, ambiguous/expired times and private/checkout pages are rejected. Unrecognized layouts or absent labels remain unreadable, rather than inventing a time. A missing year uses the current China year without rollover and the full result is shown for confirmation. This is not server-clock synchronization or a millisecond order guarantee.
+
+Live code34 installation hash matched its release candidate. The prior backup timestamp input stripped the decimal separator; the backup keyboard now explicitly permits digits, colon and decimal. The earlier temporary countdown test was already past before a monitor run could begin, so overlay display is not claimed verified. The original immediate-start/follow-up-zero plan was restored through UI and remains paused. Code35 import UI/device validation and production automatic checkout remain pending; final checks and release receipt will be recorded separately.
+
 ## 2026-10-30 v0.3.7-preview / code34 countdown overlay
 
 Added a touch-through accessibility overlay during the existing WAITING_FOR_SALE phase on Damai. It uses the same SaleTiming tick/remaining time as monitoring, displays HH:mm:ss.SSS and the configured opening timestamp in Asia/Shanghai, and indicates whether system automatic time is enabled. Text rendering is throttled to 50ms; the existing scheduler remains unchanged. The window is removed before official-page reads at opening, and on pause/stop/disconnect. It does not schedule taps, synchronize a server clock, bypass order gates, or imply millisecond order success. Pause remains available through the monitor notification.
