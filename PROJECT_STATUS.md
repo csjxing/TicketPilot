@@ -1,5 +1,12 @@
 # TicketPilot 开发进度与接手入口
 
+## v0.3.1 delivery receipt (2026-10-29)
+
+Source commit 69718c5759fb295a0fdb08c52036848528b0f81d pushed to main. GitHub release v0.3.1-preview is visible with APK, source ZIP and cloud-release.json; displayed GitHub digests match the prepared artifacts. APK: 55,201,914 bytes, SHA256 811ecb5bc5c096dc4dacdcd971d9c1053a8ebb69af735bdbab09aee84acde679. Full release download verification is incomplete (command-line download failed; browser manifest verified). Do not claim complete downloaded-asset verification.
+
+User explicitly authorized this APK transfer to the file relay and subsequent wireless phone update. Normal wireless install returned Success and package manager read code28. Device then became offline; installed-byte verification did not pass and final armed readback is unavailable. Before install armed=false was verified; no monitoring was started this turn. Do not treat installer success as new UI or runtime validation. Relay upload is still being reconciled, not yet verified downloadable.
+
+
 ## 2026-10-29 v0.3.1-preview / code28: local history viewer
 
 Added My -> ticket history: newest-first local events, inventory/action/error filters and manual refresh. Reads run off the UI thread; at most 300 matching events shown from bounded local retention (~2000 events). Counts are observations, not polling rounds. Existing random min/max cooldown is preserved and each sampled delay is now logged. Equal bounds mean fixed waiting; permitted fresh forward actions do not gain an extra random wait. This is not a server request interval or an anti-detection claim. No credentials, screenshots or viewer details are added.
