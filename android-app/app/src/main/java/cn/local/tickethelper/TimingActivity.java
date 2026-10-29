@@ -1,6 +1,8 @@
 package cn.local.tickethelper;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import cn.local.tickethelper.core.OpeningTime;
 import android.app.DatePickerDialog;
 import android.app.TimePickerDialog;
 import android.graphics.Color;
@@ -112,15 +114,27 @@ public final class TimingActivity extends Activity {
         if(preview==null)return;
         try {
             int follow=readMinutes();Instant sale=scheduledMode.isChecked()?saleDateTime.atZone(CHINA).toInstant():null;
-            String start=sale==null?"现在开始核查":sale.isAfter(Instant.now())?"等待 "+saleDateTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss"))+" 开售":"设定开售时间已到，从本次启动核查";
+            String start=sale==null?"现在开始核查":sale.isAfter(Instant.now())?"等待 "+saleDateTime.format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss.SSS"))+" 开售":"设定开售时间已到，从本次启动核查";
             MonitorConfig planned=config.withTiming(sale,follow);
             long stop=SaleTiming.effectiveStopAtMs(planned,System.currentTimeMillis());
-            preview.setText(start+"\n"+(follow==0?"沿用原停止时间": "持续关注 "+follow+" 分钟")+"\n最迟停止 "+Instant.ofEpochMilli(stop).atZone(CHINA).format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss")));
+            preview.setText(start+"\n"+(follow==0?"沿用原停止时间": "持续关注 "+follow+" 分钟")+"\n最迟停止 "+Instant.ofEpochMilli(stop).atZone(CHINA).format(DateTimeFormatter.ofPattern("MM-dd HH:mm:ss.SSS")));
         } catch(RuntimeException invalid){preview.setText("填好时间后，这里会显示本次计划。");}
     }
     private void pickDate(){new DatePickerDialog(this,(v,y,m,d)->{saleDateTime=saleDateTime.withDayOfMonth(1).withYear(y).withMonth(m+1).withDayOfMonth(d);refreshDateButtons();refreshPreview();},saleDateTime.getYear(),saleDateTime.getMonthValue()-1,saleDateTime.getDayOfMonth()).show();}
-    private void pickTime(){new TimePickerDialog(this,(v,h,m)->{saleDateTime=saleDateTime.withHour(h).withMinute(m).withSecond(0).withNano(0);refreshDateButtons();refreshPreview();},saleDateTime.getHour(),saleDateTime.getMinute(),true).show();}
-    private void refreshDateButtons(){dateButton.setText("开售日期  "+saleDateTime.toLocalDate());timeButton.setText("开售时间  "+saleDateTime.format(DateTimeFormatter.ofPattern("HH:mm:ss")));}
+    private void pickTime() {
+        EditText input=new EditText(this);input.setSingleLine(true);input.setInputType(InputType.TYPE_CLASS_DATETIME);
+        input.setText(OpeningTime.format(saleDateTime.toLocalTime()));input.setSelectAllOnFocus(true);
+        AlertDialog dialog=new AlertDialog.Builder(this).setTitle("北京时间 HH:mm:ss.SSS")
+                .setMessage("例如 15:00:00.000。毫秒是本机计划精度，不代表服务器同步或保证入场速度。")
+                .setView(input).setNegativeButton("取消",null).setPositiveButton("保存",null).create();
+        dialog.setOnShowListener(v->dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(button->{
+            try {
+                saleDateTime=java.time.LocalDateTime.of(saleDateTime.toLocalDate(),OpeningTime.parse(input.getText().toString().trim()));
+                refreshDateButtons();refreshPreview();dialog.dismiss();
+            } catch(RuntimeException invalid){input.setError("请输入有效时间，例如 15:00:00.000");}
+        }));dialog.show();
+    }
+    private void refreshDateButtons(){dateButton.setText("开售日期  "+saleDateTime.toLocalDate());timeButton.setText("开售时间  "+saleDateTime.format(DateTimeFormatter.ofPattern("HH:mm:ss.SSS")));}
     private void pause(String reason){MonitorService service=MonitorService.instance;if(service!=null)service.pause(reason);else store.recordMonitorStop(reason,"PAUSED",false,false);}
     private RadioButton choice(String label){RadioButton r=new RadioButton(this);r.setId(View.generateViewId());r.setText(label);r.setTextSize(16);r.setMinHeight(dp(48));return r;}
     private void compact(LinearLayout row,String label,int value){Button b=new Button(this);b.setText(label);b.setAllCaps(false);b.setTextSize(12);row.addView(b,new LinearLayout.LayoutParams(0,-2,1));b.setOnClickListener(v->minutes.setText(Integer.toString(value)));}

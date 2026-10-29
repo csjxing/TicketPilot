@@ -407,6 +407,8 @@ public final class AppStore {
     static String stateLabel(String state) {
         if (state == null) return "未知";
         switch (state) {
+            case "OPENING_WAKE": return "开售计时唤醒（本机延迟）";
+            case "OPENING_INPUT": return "开售后首次输入完成（未证实入场）";
             case "REFRESH_WAIT": return "随机等待";
             case "ORDER_PENDING_PAYMENT": return "已核实待付款";
             case "ORDER_SUBMIT_REQUEST": return "请求提交订单（尚未确认成功）";

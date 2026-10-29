@@ -86,6 +86,15 @@ public final class SaleTimingTest {
         MonitorConfig cleared=legacy().withTiming(null,0).resolveLegacyTiming(old);
         assertNull(cleared.saleAt);assertEquals(0,cleared.followUpMinutes);
     }
+    @Test public void finalHundredMillisecondsUseShortBoundedWakeups() {
+        assertEquals(10, SaleTiming.waitWakeMs(100));
+        assertEquals(10, SaleTiming.waitWakeMs(11));
+        assertEquals(7, SaleTiming.waitWakeMs(7));
+        assertEquals(50, SaleTiming.waitWakeMs(101));
+        SaleTiming timing=new SaleTiming(timed(1007,30),START,ELAPSED);
+        assertFalse(timing.tick(START+1006,ELAPSED+1006).mayReadOfficialPage());
+        assertTrue(timing.tick(START+1007,ELAPSED+1007).mayReadOfficialPage());
+    }
     @Test public void wakeupsAreBoundedAndNeverOvershootAnOpeningBoundary() {
         for(long remain:new long[]{1,49,50,51,999,1000,1001,4999,5000,5001,60000,60001,86_400_000}) {
             long delay=SaleTiming.waitWakeMs(remain);assertTrue(delay>0);assertTrue(delay<=remain);assertTrue(delay<=1000);

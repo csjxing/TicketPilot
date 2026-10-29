@@ -93,6 +93,7 @@ public final class MonitorService extends AccessibilityService {
     private Runnable quantityTimeout;
     private SaleTiming saleTiming;
     private SaleTiming.Phase salePhase;
+    private boolean openingWakePending, openingInputPending;
     private boolean reservationExitAttempted;
     private long detailSettleReadAfter;
     private DetailScrollPolicy.FrameCheck lastDetailScrollFrameCheck;
@@ -402,6 +403,8 @@ public final class MonitorService extends AccessibilityService {
         generation++; engine.reset(); engine.allowInitialDetailNavigation(config); busy = false; running = true; targetSeen = false;
         startedAt = SystemClock.elapsedRealtime(); lastNavigationAt = 0; nextActionAt = 0;
         saleTiming = preparedTiming; salePhase = null; reservationExitAttempted = false;
+        openingWakePending = initialTiming.phase == SaleTiming.Phase.WAITING_FOR_SALE;
+        openingInputPending = openingWakePending;
         lastCaptureAt = 0; detailSettleReadAfter = 0; lastDetailScrollFrameCheck = null;
         unknownCount = 0; actionFailures = 0; readRecovery.reset(); inputReadRecovery.reset();
         lastStatus = ""; transitionAction = Decision.Action.NONE; clearQuantityTransition(); scheduledAt = 0;
@@ -548,6 +551,10 @@ public final class MonitorService extends AccessibilityService {
         if (!timing.mayReadOfficialPage()) {
             if (!timing.statusText().equals(lastStatus)) status(timing.statusText());
             schedule(timing.nextWakeMs); return;
+        }
+        if (openingWakePending && config.saleAt != null) {
+            openingWakePending = false;
+            store.appendEvent("OPENING_WAKE", "local_clock_lateness", Math.max(0, System.currentTimeMillis()-config.saleAt.toEpochMilli()));
         }
         long settleRemaining = detailSettleReadAfter - SystemClock.elapsedRealtime();
         if (settleRemaining > 0) { schedule(settleRemaining); return; }
@@ -1510,6 +1517,12 @@ public final class MonitorService extends AccessibilityService {
         if (!running || token != generation) return;
         busy = false;
         if (success) {
+            if (openingInputPending && config.saleAt != null && decision.action != Decision.Action.BACK
+                    && System.currentTimeMillis() >= config.saleAt.toEpochMilli()) {
+                openingInputPending = false;
+                store.appendEvent("OPENING_INPUT", decision.action.name().toLowerCase(Locale.ROOT),
+                        System.currentTimeMillis()-config.saleAt.toEpochMilli());
+            }
             inputReadRecovery.reset();
             actionFailures = 0;
             engine.recordAction(decision, System.currentTimeMillis());

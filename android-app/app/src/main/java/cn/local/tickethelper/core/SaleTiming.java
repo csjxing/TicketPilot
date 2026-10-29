@@ -74,7 +74,7 @@ public final class SaleTiming {
     /** A timer can wake exactly at the boundary; these waits perform no screenshots or requests. */
     public static long waitWakeMs(long untilSaleMs) {
         if (untilSaleMs<=0) return 0;
-        long interval=untilSaleMs>60_000?1000:untilSaleMs>5000?250:untilSaleMs>1000?100:50;
+        long interval=untilSaleMs>60_000?1000:untilSaleMs>5000?250:untilSaleMs>1000?100:untilSaleMs>100?50:10;
         return Math.min(untilSaleMs,interval);
     }
     public static long eventReadDelayMs() { return EVENT_READ_DELAY_MS; }

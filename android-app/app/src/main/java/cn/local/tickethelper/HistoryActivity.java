@@ -57,7 +57,7 @@ public final class HistoryActivity extends Activity {
     }
     private boolean matches(String state) {
         if(filter==1)return state.equals("OUT_OF_STOCK")||state.equals("IN_STOCK")||state.equals("UNKNOWN");
-        if(filter==2)return state.equals("ACTION")||state.equals("REFRESH_WAIT")||state.startsWith("ORDER_");
+        if(filter==2)return state.equals("ACTION")||state.equals("REFRESH_WAIT")||state.startsWith("ORDER_")||state.startsWith("OPENING_");
         if(filter==3)return state.equals("UNKNOWN")||state.equals("BLOCKED")||state.equals("PAUSED")||state.endsWith("FAILED")||state.equals("ORDER_UNKNOWN");
         return true;
     }

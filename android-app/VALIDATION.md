@@ -1,5 +1,14 @@
 # Android 构建与真机验收
 
+## 2026-10-29 v0.3.2 timing candidate: device validation blocked
+
+User reported unstable Changsha monitoring and authorized the specific 2026-11-06 19:00 Changsha target, 1680 x 2, total <=3360, to pending payment. Two viewers still require explicit phone selection. The known paired wireless endpoint is not connected and reconnect failed; no current screen, inventory or failure logs were obtained. A new exclusive device-test window is pending. No monitor or order was started.
+
+Candidate adds strict HH:mm:ss.SSS opening time input, bounded 10ms timer wakeups during the final 100ms, and local opening-wake/first-input-completion latency records. These are local clock/input measurements, not server synchronization, entry acknowledgement or guaranteed millisecond execution. All existing page, purchase, viewer and duplicate-order guards remain. Production order adapter registration is still empty. Do not claim inventory-to-order completion.
+
+Final candidate checks: 743 unit tests, 0 failures/errors; Lint and APK build passed. This timing candidate does not resolve the reported instability without fresh device evidence and is not released as a completed fix.
+
+
 ## 2026-10-29 v0.3.1-preview / code28: local history viewer
 
 Added My -> ticket history: newest-first local events, inventory/action/error filters and manual refresh. Reads run off the UI thread; at most 300 matching events shown from bounded local retention (~2000 events). Counts are observations, not polling rounds. Existing random min/max cooldown is preserved and each sampled delay is now logged. Equal bounds mean fixed waiting; permitted fresh forward actions do not gain an extra random wait. This is not a server request interval or an anti-detection claim. No credentials, screenshots or viewer details are added.
