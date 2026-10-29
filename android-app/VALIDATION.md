@@ -1,5 +1,15 @@
 # Android 构建与真机验收
 
+## 2026-10-30 real confirmation and preselection audit
+
+The user explicitly confirmed that the attendees were already preselected in Damai and authorized other concerts for flow validation. Live Changsha project booking-guide UI displayed two preselected attendees. This supersedes the mistaken inference that empty TicketPilot viewer preferences meant the user had not selected attendees. Do not copy identities into public artifacts.
+
+Using normal operator UI navigation, Yu Chengqing Hangzhou 2026-12-19 19:00 was selected as a flow-only sample: 980 x 2, total 1960. Its actual confirmation page automatically carried two checked attendees. The same-version 9.0.37#109003700 native capture was complete (112 nodes, two native checkable/checked controls; two-pass capture finished at 251ms). The price-details sheet showed goods total 1960 and 980 x 2, with no additional fee line; its complete capture contained 149 nodes and finished at 418ms. These are reading measurements, not automated checkout or submission latency.
+
+No submission or payment was performed. A separate user question is pending for one actual test pending-payment order on this different event; Changsha purchase authorization does not silently authorize this sample. TicketPilot remains PREPARE/armed=false and its saved Changsha plan is unchanged.
+
+Concrete adaptation gaps: local viewer preferences do not ingest Damai preselection; the generic parser requires separate VIEWER_COUNT, EXTRAS_STATUS, EXTRA_FEE and checked AGREEMENT evidence that this visible confirmation page does not expose in that form. The two selected native checkbox states alone do not resolve those other fields. Actual amount-detail scope, submission consent semantics and official pending-payment structure must be reviewed before registering a production profile. Keep existing submission/deduplication gates. No synthetic production adapter or new app build was created in this audit.
+
 ## 2026-10-29 23:33 code33 live comparison
 
 Installed v0.3.6-preview/code33 APK was read back from the paired vivo and matched the prepared artifact byte hash (SHA256 a131a8fa3798a310b32d06bdca67596bb60c2796e6cdda5b9bdf171a3b09fd1a). Accessibility and authorized Shizuku input were connected. Saved target remained Changsha 2026-11-06 19:00, 1680 x 2, total <=3360, PREPARE. No viewer was selected or assumed.
