@@ -1,8 +1,16 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-29 23:33 code33 live comparison
+
+Installed v0.3.6-preview/code33 APK was read back from the paired vivo and matched the prepared artifact byte hash (SHA256 a131a8fa3798a310b32d06bdca67596bb60c2796e6cdda5b9bdf171a3b09fd1a). Accessibility and authorized Shizuku input were connected. Saved target remained Changsha 2026-11-06 19:00, 1680 x 2, total <=3360, PREPARE. No viewer was selected or assumed.
+
+A bounded approximately 185-second local run recorded 44 returns, 44 entries and 43 session selections. Its 42 measured session-input-completion intervals had median 4137.5ms, minimum 3367ms and maximum 9241ms. Compared with the previous 4602ms median this is about 10.1% lower, but these are separate short runs, not controlled proof of server or checkout speed. There were 44 OUT_OF_STOCK and 169 transient UNKNOWN observations, no IN_STOCK and no unstable_page terminal pause. Stop was sent and verified PAUSED with armed=false. No order/payment was created; no display settings changed.
+
+Most remaining recovery events concerned page changes during reads. Indefinite reliability, opening-time accuracy and positive-stock two-ticket pending-payment checkout remain unverified. Documentation only was updated after this run; the tested APK bytes were not rebuilt. GitHub release assets remain prepared locally, not published.
+
 ## v0.3.6 delivery state
 
-Source commit cad9525 is pushed to origin/main. Same-signature APK, Android source ZIP and cloud-release.json are prepared under exports/release-v0.3.6-preview. GitHub release UI navigation succeeded but DOM/form access timed out again; no assets were uploaded and no public release URL is verified. The new exclusive device-test request is unanswered, so code33 was not installed and no phone monitoring was started in this turn. Do not claim a measured speed improvement over code32 yet.
+Source commit cad9525 is pushed to origin/main. Same-signature APK, Android source ZIP and cloud-release.json are prepared under exports/release-v0.3.6-preview. GitHub release UI navigation succeeded but DOM/form access timed out again; no assets were uploaded and no public release URL is verified. User confirmed continuation; code33 installation and the bounded live comparison below are now verified. Public release upload is still incomplete.
 
 ## 2026-10-29 v0.3.6-preview / code33: remove duplicated pacing
 
