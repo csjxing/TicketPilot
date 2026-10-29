@@ -1,5 +1,9 @@
 # TicketPilot 开发进度与接手入口
 
+## code34 delivery and validation checkpoint
+
+Final v0.3.7 build passed: 752 unit tests, no failures/errors, Lint and assembleDebug successful. Source commit 91b6773 is pushed to main. Same-signature APK/source ZIP/manifest prepared under exports/release-v0.3.7-preview; public release upload remains unverified/incomplete. Wireless cover installation was sent; current vivo screen is the system install confirmation, user confirmation pending. Countdown overlay rendering, opening removal and pause cleanup on device are not yet verified. Do not call these passed on the basis of the build. No monitor was armed or second test order submitted.
+
 ## 2026-10-30 v0.3.7-preview / code34 countdown overlay
 
 Added a touch-through accessibility overlay during the existing WAITING_FOR_SALE phase on Damai. It uses the same SaleTiming tick/remaining time as monitoring, displays HH:mm:ss.SSS and the configured opening timestamp in Asia/Shanghai, and indicates whether system automatic time is enabled. Text rendering is throttled to 50ms; the existing scheduler remains unchanged. The window is removed before official-page reads at opening, and on pause/stop/disconnect. It does not schedule taps, synchronize a server clock, bypass order gates, or imply millisecond order success. Pause remains available through the monitor notification.
