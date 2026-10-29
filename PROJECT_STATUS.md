@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-29 21:33 code29 live regression: not stable
+
+User confirmed accessibility and granted another ten-minute exclusive window. Installed code29 APK was pulled and matched SHA256 `2ded9e3f4c715d80d19bf023404d7233f4e96532dda08bd0916dede9ae88378f`. System accessibility dump showed the service bound with no crashed service; screenshot subsequently showed connected. A UIAutomator inspection can transiently disturb accessibility, so do not interpret its immediate readiness text as a persistent permission failure. Normal preparation-page input connected the already-authorized Shizuku service; all three preparation items then showed complete.
+
+The first local PREPARE run dispatched 6 selector entries, 6 target-session selections and 6 returns. It recorded 11 OUT_OF_STOCK and 40 UNKNOWN observations, no IN_STOCK. Five session-to-session intervals had median 6.49s, range 4.23-7.90s. After the sixth return, `first_read_ticket_entry_not_verified` appeared, read durations rose to approximately 3.3-3.4s, and `unstable_page` paused the run. A second explicit start on the same detail page produced 7 UNKNOWN observations and no navigation, then the same pause. These are failed stability tests, not successful continuous monitoring or server request-rate measurements.
+
+Normal StopReceiver recorded PAUSED before the authorized window expired. No viewer selection, order or payment; production checkout adapter remains unregistered. Original display settings were not modified. Next work must distinguish missing/ambiguous footer evidence, read-boundary changes and native-tree latency using fresh diagnostics; do not relax purchase gates or claim a root cause solely from the visible moving video. Candidate code29 is installed but is not a completed stability fix. This documentation-only follow-up does not create a new APK release.
+
 ## 2026-10-29 restored wireless session (installation pending)
 
 User reopened wireless debugging and granted 15 minutes. Rediscovered the known host and verified the saved model; package code28, unlocked, armed=false, Changsha 2026-11-06 19:00 / 1680 x 2 / 3360 / PREPARE / 500-1500ms. Latest user failure log contains ARMED then 13 UNKNOWN observations (page_changed_during_read, ending unstable_page), no dispatched navigation. Current secure accessibility setting confirms TicketPilot service OFF; app preparation page also shows accessibility missing and Shizuku not connected. The new start broadcast produced no start log, so no automatic test run is claimed.
