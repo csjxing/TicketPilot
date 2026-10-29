@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-29 22:19 code32 final bounded device run
+
+User confirmed the vivo installer. Pulled installed package is v0.3.5-preview/code32 and matches prepared APK SHA256 `758a1cc81eeefd3a39b400b1d28a39d2151b462fa7b658c97ec00fb0b03512fa` (55,234,216 bytes). Accessibility and the already-authorized Shizuku input were ready. Target remained Changsha 2026-11-06 19:00, 1680 x 2, maximum 3360, PREPARE; no viewer identity was assumed.
+
+Within the ten-minute exclusive window (installation/preparation included), local execution ran approximately 310.6 seconds, dispatched 60 detail entries, 60 target-session selections and 59 returns. It recorded 110 OUT_OF_STOCK observations, 227 transient UNKNOWN reads and no IN_STOCK. Session-to-session cycle median was 4.602s, range 3.625-9.162s. The run did not end with unstable_page; the deadline stop and explicit final stop recorded PAUSED and armed=false. This passes this bounded no-stock navigation regression, not indefinite reliability, a server refresh interval, positive-stock two-ticket checkout or pending-payment automation. No order/payment was created. Settings were not modified.
+
+Source fixes are pushed to main. Public release assets are prepared locally under exports/release-v0.3.5-preview; GitHub Releases upload remains incomplete because browser control timed out and the file chooser could not be completed. No new public APK URL is verified. Phone installation is independently verified. Documentation updates after this run do not change the tested APK bytes.
+
 ## 2026-10-29 v0.3.5-preview / code32: second-read navigation refinement
 
 Code30 was installed and its pulled APK matched the prepared hash, but a fresh run still paused after two complete detail/selector/session/back cycles. Code31 added bounded, non-content stage diagnostics and was also installed with a matching APK. Its live run again paused after two cycles: diagnostics include window-boundary interruptions and second-read mismatches even when both decisions report the verified detail entry. No positive inventory or order was observed. The merge fix alone therefore does not establish stability.
