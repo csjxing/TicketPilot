@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-30 code35 installation and delivery receipt
+
+v0.3.8-preview/code35 was normally installed over wireless ADB. Package version and the complete installed APK SHA-256 were read back and matched the frozen candidate. Live timing settings show the primary “从大麦读取开售时间” entry, with manual fields hidden by default. The saved Changsha plan remains PREPARE/armed=false, immediate start, follow-up zero. No order or monitor was started and no device display setting was changed.
+
+The follow-up import/cancel probe could not reliably inspect the return screen with UIAutomator; it does not establish successful import, cancellation UI or countdown display. The final normal Back exited timing settings and the phone displayed the helper My page. No fresh future opening announcement was captured. Positive import and overlay lifecycle remain live-validation gaps.
+
+766 tests, Lint and build passed. Source commit 77eb5d4 is pushed to main. Frozen APK/source ZIP/manifest are in exports/release-v0.3.8-preview. GitHub publication remains blocked before remote write because independent browser release-page reads timed out; no assets/form/draft/publish action was completed, no public v0.3.8 download URL is verified. No file-relay upload was made. Phone installation and public distribution are separate results.
+
 ## 2026-10-30 v0.3.8-preview / code35: read opening time from Damai
 
 Timing settings now lead with “从大麦读取开售时间”. Manual date/time controls are collapsed as a fallback. This explicit local read stays paused, waits at most two minutes while the user navigates to the target session, and can be cancelled. Native labels are tried first, then bundled local OCR with foreground/window-boundary checks. Only a timestamp and fixed status remain; no page content or screenshot is persisted or sent to a model. A captured draft must match the current plan revision, remain fresh, and be confirmed before it is filled into the settings; saving still does not start monitoring.
