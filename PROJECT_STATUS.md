@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-29 v0.3.6-preview / code33: remove duplicated pacing
+
+Screenshot pacing now waits only the remainder of the existing 400ms capture cadence; time already spent recognizing the first frame counts toward the second-read wait. The platform cadence, two independent full reads, page/identity/geometry checks and freshness limits are unchanged. The same reader timestamp also paces ordinary monitor and verification captures.
+
+A verified re-entry and target-session selection now preserve their refresh cycle's existing random deadline instead of sampling another interval after session selection. BACK, failed actions and other actions retain ordinary pacing; a quick cycle still cannot dispatch the next BACK before the original deadline. Existing saved minimum/maximum intervals are not changed. This does not prove that tapping a tier sends a new stock request, so the app does not replace real re-entry with an unverified tier-toggle loop.
+
+History adds CYCLE_LATENCY: monotonic time between completed session-selection inputs, explicitly distinguished from server refresh and order latency. Three new regression tests cover capture processing time, clock rollback and preservation of the original cooldown/failed-action delay. 751 tests passed; Lint and APK build passed. Code33 device comparison is pending; the code32 median 4602ms and 60 session selections remain the latest live baseline. No speed guarantee, positive-stock checkout or pending-payment claim.
+
 ## 2026-10-29 22:19 code32 final bounded device run
 
 User confirmed the vivo installer. Pulled installed package is v0.3.5-preview/code32 and matches prepared APK SHA256 `758a1cc81eeefd3a39b400b1d28a39d2151b462fa7b658c97ec00fb0b03512fa` (55,234,216 bytes). Accessibility and the already-authorized Shizuku input were ready. Target remained Changsha 2026-11-06 19:00, 1680 x 2, maximum 3360, PREPARE; no viewer identity was assumed.

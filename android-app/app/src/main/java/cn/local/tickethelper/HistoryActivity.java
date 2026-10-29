@@ -57,7 +57,7 @@ public final class HistoryActivity extends Activity {
     }
     private boolean matches(String state) {
         if(filter==1)return state.equals("OUT_OF_STOCK")||state.equals("IN_STOCK")||state.equals("UNKNOWN");
-        if(filter==2)return state.equals("ACTION")||state.equals("REFRESH_WAIT")||state.startsWith("ORDER_")||state.startsWith("OPENING_");
+        if(filter==2)return state.equals("ACTION")||state.equals("REFRESH_WAIT")||state.equals("CYCLE_LATENCY")||state.startsWith("ORDER_")||state.startsWith("OPENING_");
         if(filter==3)return state.equals("UNKNOWN")||state.equals("BLOCKED")||state.equals("PAUSED")||state.endsWith("FAILED")||state.equals("ORDER_UNKNOWN");
         return true;
     }
@@ -73,6 +73,7 @@ public final class HistoryActivity extends Activity {
             String detail=e.optString("detail");
             if(state.equals("REFRESH_WAIT") && detail.matches("sampled_cooldown_ms_[0-9]+"))
                 detail="本次随机等待 " + detail.substring("sampled_cooldown_ms_".length()) + " 毫秒（连续前进动作可跳过）";
+            else if(state.equals("CYCLE_LATENCY")) detail="相邻两次场次点击完成之间的时间；不是下单耗时或服务器刷新间隔";
             else if(state.equals("ACTION")) {
                 switch(detail) {
                     case "open_tickets_dispatched": detail="已请求进入选票页"; break;

@@ -85,6 +85,7 @@ public final class MonitorService extends AccessibilityService {
     private long semanticDetailBoundary;
     private int semanticDetailWindow;
     private long generation, windowGeneration, startedAt, lastNavigationAt, nextActionAt, lastCaptureAt, scheduledAt;
+    private long lastSessionCompletedElapsed;
     private long lastWindowChangeElapsed;
     private String lastWindowEventSummary = "none";
     private long transitionAt;
@@ -401,7 +402,7 @@ public final class MonitorService extends AccessibilityService {
         if (initialTiming.phase == SaleTiming.Phase.STOPPED) { pause(initialTiming.statusText()); return; }
         if (ocr.isBusy()) { ocr.close(); ocr = new OcrReader(this); }
         generation++; engine.reset(); engine.allowInitialDetailNavigation(config); busy = false; running = true; targetSeen = false;
-        startedAt = SystemClock.elapsedRealtime(); lastNavigationAt = 0; nextActionAt = 0;
+        startedAt = SystemClock.elapsedRealtime(); lastNavigationAt = 0; nextActionAt = 0; lastSessionCompletedElapsed = 0;
         saleTiming = preparedTiming; salePhase = null; reservationExitAttempted = false;
         openingWakePending = initialTiming.phase == SaleTiming.Phase.WAITING_FOR_SALE;
         openingInputPending = openingWakePending;
@@ -584,8 +585,8 @@ public final class MonitorService extends AccessibilityService {
             if (valid(token, pageToken)) readRecovery.reset();
             handle(decision, began, token, pageToken, nodes.size(), 0, false); return;
         }
-        long sinceCapture = SystemClock.elapsedRealtime() - lastCaptureAt;
-        if (sinceCapture < 400) { busy = false; schedule(400 - sinceCapture); return; }
+        long captureWait = ocr.captureDelayMs();
+        if (captureWait > 0) { busy = false; schedule(captureWait); return; }
         lastCaptureAt = SystemClock.elapsedRealtime();
         ocr.readGuarded(nodes, observedAt, (items, evidence, proof, error) -> {
             if (token != generation) return;
@@ -672,7 +673,7 @@ public final class MonitorService extends AccessibilityService {
                 store.appendEvent("READ_RECOVERY", "detail_semantics_revalidated", SystemClock.elapsedRealtime() - began);
                 handle(second, began, token, windowGeneration, secondNodes.size(), secondItems.size(), true);
             });
-        }, 400);
+        }, ocr.captureDelayMs());
         return true;
     }
 
@@ -1538,6 +1539,12 @@ public final class MonitorService extends AccessibilityService {
             actionFailures = 0;
             engine.recordAction(decision, System.currentTimeMillis());
             store.appendEvent("ACTION", decision.action.name().toLowerCase(Locale.ROOT) + "_dispatched", 0);
+            if (decision.action == Decision.Action.SELECT_SESSION) {
+                long completed = SystemClock.elapsedRealtime();
+                if (lastSessionCompletedElapsed > 0)
+                    store.appendEvent("CYCLE_LATENCY", "session_input_to_session_input", completed-lastSessionCompletedElapsed);
+                lastSessionCompletedElapsed = completed;
+            }
             if (decision.action == Decision.Action.CONFIRM_TIER || decision.action == Decision.Action.SELECT_TIER
                     || decision.action == Decision.Action.PROBE_TIER || decision.action == Decision.Action.INCREASE_QUANTITY
                     || decision.action == Decision.Action.SELECT_SESSION) {
@@ -1568,7 +1575,7 @@ public final class MonitorService extends AccessibilityService {
         }
         // This paired navigation belongs to BACK's existing refresh round; do not start a second
         // random interval or move the outer refresh anchor forward after entering the selector.
-        if (!(success && decision.action == Decision.Action.OPEN_TICKETS && "verified_return_detail_entry".equals(decision.reason))) {
+        if (ActionPacing.restartsCooldown(decision, success)) {
             long delay = ThreadLocalRandom.current().nextLong(config.minIntervalMs, config.maxIntervalMs + 1);
             nextActionAt = SystemClock.elapsedRealtime() + delay;
             store.appendEvent("REFRESH_WAIT", "sampled_cooldown_ms_" + delay, 0);

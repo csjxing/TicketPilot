@@ -8,6 +8,21 @@ public final class ActionPacingTest {
     private Decision decision(Decision.State state, Decision.Action action, long at) {
         return new Decision(state, action, target, "synthetic_test", at);
     }
+    @Test public void oneRoundKeepsOriginalRandomDeadlineThroughReentryAndSession() {
+        Decision back=decision(Decision.State.OUT_OF_STOCK,Decision.Action.BACK,10000);
+        Decision enter=new Decision(Decision.State.READY,Decision.Action.OPEN_TICKETS,target,"verified_return_detail_entry",10000);
+        Decision session=new Decision(Decision.State.PROBING,Decision.Action.SELECT_SESSION,target,"target_session_cell_verified",10000);
+        assertTrue(ActionPacing.restartsCooldown(back,true));
+        assertFalse(ActionPacing.restartsCooldown(enter,true));
+        assertFalse(ActionPacing.restartsCooldown(session,true));
+        // Returning very quickly still cannot start the next BACK before the original deadline.
+        assertFalse(ActionPacing.mayDispatch(back,10001,1499,1500,false));
+        assertTrue(ActionPacing.mayDispatch(back,10001,1500,1500,false));
+        assertTrue(ActionPacing.restartsCooldown(session,false));
+        assertTrue(ActionPacing.restartsCooldown(decision(Decision.State.PROBING,Decision.Action.SELECT_SESSION,10000),true));
+        assertTrue(ActionPacing.restartsCooldown(new Decision(Decision.State.PROBING,Decision.Action.SELECT_SESSION,null,
+                "target_session_cell_verified",10000),true));
+    }
     @Test public void freshSessionAndBoundTrialAdvanceWithoutAnIdleRound() {
         Decision session = new Decision(Decision.State.PROBING, Decision.Action.SELECT_SESSION, target,
                 "target_session_cell_verified", 10000);

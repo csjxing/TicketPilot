@@ -1,5 +1,13 @@
 # TicketPilot · 票务助手 Android · v0.2.8-preview / code25 已发布
 
+## 2026-10-29 v0.3.6-preview / code33: remove duplicated pacing
+
+Screenshot pacing now waits only the remainder of the existing 400ms capture cadence; time already spent recognizing the first frame counts toward the second-read wait. The platform cadence, two independent full reads, page/identity/geometry checks and freshness limits are unchanged. The same reader timestamp also paces ordinary monitor and verification captures.
+
+A verified re-entry and target-session selection now preserve their refresh cycle's existing random deadline instead of sampling another interval after session selection. BACK, failed actions and other actions retain ordinary pacing; a quick cycle still cannot dispatch the next BACK before the original deadline. Existing saved minimum/maximum intervals are not changed. This does not prove that tapping a tier sends a new stock request, so the app does not replace real re-entry with an unverified tier-toggle loop.
+
+History adds CYCLE_LATENCY: monotonic time between completed session-selection inputs, explicitly distinguished from server refresh and order latency. Three new regression tests cover capture processing time, clock rollback and preservation of the original cooldown/failed-action delay. 751 tests passed; Lint and APK build passed. Code33 device comparison is pending; the code32 median 4602ms and 60 session selections remain the latest live baseline. No speed guarantee, positive-stock checkout or pending-payment claim.
+
 ## 2026-10-29 v0.3.5-preview / code32: second-read navigation refinement
 
 Code30 was installed and its pulled APK matched the prepared hash, but a fresh run still paused after two complete detail/selector/session/back cycles. Code31 added bounded, non-content stage diagnostics and was also installed with a matching APK. Its live run again paused after two cycles: diagnostics include window-boundary interruptions and second-read mismatches even when both decisions report the verified detail entry. No positive inventory or order was observed. The merge fix alone therefore does not establish stability.

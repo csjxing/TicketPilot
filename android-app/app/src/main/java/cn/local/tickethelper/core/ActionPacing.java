@@ -4,6 +4,18 @@ package cn.local.tickethelper.core;
 public final class ActionPacing {
     private ActionPacing() { }
 
+    /** BACK and its verified re-entry/session selection belong to one refresh cycle.
+     * Failed or unrelated actions retain their ordinary retry/idle delay. */
+    public static boolean restartsCooldown(Decision decision, boolean success) {
+        if (!success || decision == null || decision.target == null || !decision.target.enabled
+                || !decision.target.hasBounds()) return true;
+        boolean reentry = decision.action == Decision.Action.OPEN_TICKETS && decision.state == Decision.State.READY
+                && "verified_return_detail_entry".equals(decision.reason);
+        boolean session = decision.action == Decision.Action.SELECT_SESSION && decision.state == Decision.State.PROBING
+                && "target_session_cell_verified".equals(decision.reason);
+        return !reentry && !session;
+    }
+
     public static boolean mayDispatch(Decision decision, long nowMillis, long nowElapsed, long nextActionAt, boolean retryPending) {
         if (decision == null || decision.action == null || decision.action == Decision.Action.NONE) return false;
         if (nowElapsed >= nextActionAt) return true;

@@ -36,6 +36,9 @@ final class OcrReader implements AutoCloseable {
     private final Handler handler = new Handler(Looper.getMainLooper());
     OcrReader(AccessibilityService service) { this.service = service; }
     boolean isBusy() { return busy; }
+    long captureDelayMs() {
+        return cn.local.tickethelper.core.CapturePacing.remainingMs(lastScreenshotAt, SystemClock.elapsedRealtime());
+    }
 
     void read(Callback callback) {
         read(List.of(), 0, (items, evidence, error) -> callback.complete(items, error));
@@ -141,7 +144,7 @@ final class OcrReader implements AutoCloseable {
         if (busy || closed || proof == null || !permitted(allowed)) { callback.complete(false); return; }
         busy = true;
         // Android throttles takeScreenshot; do not turn ordinary throttling into a new UI failure.
-        long delay = Math.max(0, 400 - (SystemClock.elapsedRealtime() - lastScreenshotAt));
+        long delay = captureDelayMs();
         handler.postDelayed(() -> {
             if (closed || !permitted(allowed)) { busy = false; callback.complete(false); return; }
             lastScreenshotAt = SystemClock.elapsedRealtime();
