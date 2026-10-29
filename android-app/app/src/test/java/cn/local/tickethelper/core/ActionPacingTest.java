@@ -8,6 +8,33 @@ public final class ActionPacingTest {
     private Decision decision(Decision.State state, Decision.Action action, long at) {
         return new Decision(state, action, target, "synthetic_test", at);
     }
+    @Test public void freshSessionAndBoundTrialAdvanceWithoutAnIdleRound() {
+        Decision session = new Decision(Decision.State.PROBING, Decision.Action.SELECT_SESSION, target,
+                "target_session_cell_verified", 10000);
+        assertTrue(ActionPacing.mayDispatch(session, 10001, 400, 5400, false));
+        assertFalse(ActionPacing.mayDispatch(session, 10001, 400, 5400, true));
+        var evidence = new Observation.VerifiedSelection(10000, "2026-11-06", "19:00", null, null, null, null);
+        Decision probe = new Decision(Decision.State.PROBING, Decision.Action.PROBE_TIER, target,
+                "trial_selection_inventory_unknown", 10000, evidence);
+        assertTrue(ActionPacing.mayDispatch(probe, 10001, 400, 5400, false));
+        assertFalse(ActionPacing.mayDispatch(probe, 13000, 400, 5400, false));
+    }
+    @Test public void onlyDefinitelyUnsentDetailNavigationMayReobserveAfterGuardTimeout() {
+        UiItem footer = new UiItem("缺货登记", 10, 900, 100, 950, true, false, false, UiItem.Source.OCR);
+        Decision entry = new Decision(Decision.State.READY, Decision.Action.OPEN_TICKETS, footer,
+                "verified_initial_detail_entry", 10000);
+        assertTrue(InputDispatchPolicy.mayReobserveNavigation(entry, false, false, "dispatch_guard_rejected",
+                InputDispatchPolicy.Rejection.MAIN_GUARD_TIMEOUT));
+        assertFalse(InputDispatchPolicy.mayReobserveNavigation(entry, false, true, "dispatch_guard_rejected",
+                InputDispatchPolicy.Rejection.MAIN_GUARD_TIMEOUT));
+        assertFalse(InputDispatchPolicy.mayReobserveNavigation(entry, false, false, "dispatch_guard_rejected",
+                InputDispatchPolicy.Rejection.SCREEN_LOCKED));
+        assertFalse(InputDispatchPolicy.mayReobserveNavigation(entry, false, false, "command_timeout_unknown",
+                InputDispatchPolicy.Rejection.MAIN_GUARD_TIMEOUT));
+        assertFalse(InputDispatchPolicy.mayReobserveNavigation(decision(Decision.State.TIER_SELECTED,
+                Decision.Action.CONFIRM_TIER, 10000), false, false, "dispatch_guard_rejected",
+                InputDispatchPolicy.Rejection.MAIN_GUARD_TIMEOUT));
+    }
     @Test public void verifiedConfirmAdvancesBeforeRoutineCooldown() {
         assertTrue(ActionPacing.mayDispatch(decision(Decision.State.TIER_SELECTED, Decision.Action.CONFIRM_TIER, 10000), 10001, 400, 5400, false));
     }

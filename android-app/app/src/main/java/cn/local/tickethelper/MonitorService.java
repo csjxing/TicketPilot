@@ -31,6 +31,7 @@ import cn.local.tickethelper.core.MonitorConfig;
 import cn.local.tickethelper.core.Observation;
 import cn.local.tickethelper.core.QuantityTransition;
 import cn.local.tickethelper.core.SaleTiming;
+import cn.local.tickethelper.core.DetailNavigationRead;
 import cn.local.tickethelper.core.UiItem;
 import cn.local.tickethelper.ai.AiContextRepository;
 import cn.local.tickethelper.ai.AiPageSummary;
@@ -80,6 +81,9 @@ public final class MonitorService extends AccessibilityService {
     private Runnable panelWatch;
     private String inputMode = AppStore.INPUT_ACCESSIBILITY;
     private boolean running, busy, targetSeen, screenReceiverRegistered;
+    private Decision semanticDetailDecision;
+    private long semanticDetailBoundary;
+    private int semanticDetailWindow;
     private long generation, windowGeneration, startedAt, lastNavigationAt, nextActionAt, lastCaptureAt, scheduledAt;
     private long lastWindowChangeElapsed;
     private String lastWindowEventSummary = "none";
@@ -395,7 +399,7 @@ public final class MonitorService extends AccessibilityService {
         SaleTiming.Tick initialTiming = preparedTiming.tick(System.currentTimeMillis(), SystemClock.elapsedRealtime());
         if (initialTiming.phase == SaleTiming.Phase.STOPPED) { pause(initialTiming.statusText()); return; }
         if (ocr.isBusy()) { ocr.close(); ocr = new OcrReader(this); }
-        generation++; engine.reset(); busy = false; running = true; targetSeen = false;
+        generation++; engine.reset(); engine.allowInitialDetailNavigation(config); busy = false; running = true; targetSeen = false;
         startedAt = SystemClock.elapsedRealtime(); lastNavigationAt = 0; nextActionAt = 0;
         saleTiming = preparedTiming; salePhase = null; reservationExitAttempted = false;
         lastCaptureAt = 0; detailSettleReadAfter = 0; lastDetailScrollFrameCheck = null;
@@ -405,7 +409,7 @@ public final class MonitorService extends AccessibilityService {
         getSystemService(NotificationManager.class).cancel(12);
         store.setArmed(true); store.appendEvent("ARMED", "user_started", 0);
         status("已启动；请在 20 秒内打开大麦目标演出页。");
-        schedule(600);
+        schedule(0);
     }
 
     public void pause(String reason) { stop(reason, "PAUSED", "user_paused", false); }
@@ -549,6 +553,7 @@ public final class MonitorService extends AccessibilityService {
         if (settleRemaining > 0) { schedule(settleRemaining); return; }
         if (ocr.isBusy()) { schedule(700); return; }
         busy = true;
+        semanticDetailDecision = null;
         long token = generation, pageToken = windowGeneration, began = SystemClock.elapsedRealtime();
         long boundaryToken = readBoundaryGeneration;
         int readWindow = currentReadWindow();
@@ -573,7 +578,7 @@ public final class MonitorService extends AccessibilityService {
             handle(decision, began, token, pageToken, nodes.size(), 0, false); return;
         }
         long sinceCapture = SystemClock.elapsedRealtime() - lastCaptureAt;
-        if (sinceCapture < 700) { busy = false; schedule(700 - sinceCapture); return; }
+        if (sinceCapture < 400) { busy = false; schedule(400 - sinceCapture); return; }
         lastCaptureAt = SystemClock.elapsedRealtime();
         ocr.readGuarded(nodes, observedAt, (items, evidence, proof, error) -> {
             if (token != generation) return;
@@ -581,6 +586,7 @@ public final class MonitorService extends AccessibilityService {
                 stop("页面截图或本地识别不可用，请在手机检查后重新开始。", "BLOCKED", error, true); return;
             }
             if (!valid(token, pageToken)) {
+                if (trySemanticDetailRead(nodes, items, observedAt, began, token, boundaryToken, readWindow)) return;
                 long currentPage = windowGeneration;
                 if (running && unlocked() && TARGET.equals(foreground())
                         && cn.local.tickethelper.core.ReadStability.mayRecheck(pageToken, currentPage,
@@ -614,6 +620,52 @@ public final class MonitorService extends AccessibilityService {
             }
             acceptMonitorRead(nodes, items, evidence, observedAt, began, token, pageToken);
         });
+    }
+
+    /** Reread the entire screen, but compare navigation semantics rather than video pixels.
+     * Both full reads must independently propose only the same reversible footer entry. */
+    private boolean trySemanticDetailRead(List<UiItem> nodes, List<UiItem> items, long observedAt,
+                                          long began, long token, long boundary, int window) {
+        if (!detailReadBoundaryCurrent(token, boundary, window) || quantityTransition.pending()
+                || transitionAction != Decision.Action.NONE || liveOrderAttempt != null) return false;
+        List<UiItem> firstItems = mergeReadItems(nodes, items);
+        Decision first = engine.evaluate(config, new Observation(TARGET, firstItems, observedAt), lastNavigationAt);
+        if (!DetailOcrNavigation.isProposal(first) || DetailScrollPolicy.unsafePage(firstItems)) return false;
+        handler.postDelayed(() -> {
+            if (token != generation) return;
+            if (!detailReadBoundaryCurrent(token, boundary, window)) { deferChangedRead(began); return; }
+            List<UiItem> secondNodes = readNodes();
+            long secondAt = System.currentTimeMillis();
+            ocr.readGuarded(secondNodes, secondAt, (secondItems, evidence, proof, error) -> {
+                if (token != generation) return;
+                if (error != null || !detailReadBoundaryCurrent(token, boundary, window)) { deferChangedRead(began); return; }
+                List<UiItem> merged = mergeReadItems(secondNodes, secondItems);
+                Decision second = engine.evaluate(config, new Observation(TARGET, merged, secondAt), lastNavigationAt);
+                if (!DetailNavigationRead.agrees(config, first, firstItems, second, merged, System.currentTimeMillis())
+                        || DetailScrollPolicy.unsafePage(readNodes())
+                        || !detailOcrAnchorSafe(second, getRootInActiveWindow())) { deferChangedRead(began); return; }
+                semanticDetailDecision = second; semanticDetailBoundary = boundary; semanticDetailWindow = window;
+                readRecovery.reset();
+                store.appendEvent("READ_RECOVERY", "detail_semantics_revalidated", SystemClock.elapsedRealtime() - began);
+                handle(second, began, token, windowGeneration, secondNodes.size(), secondItems.size(), true);
+            });
+        }, 400);
+        return true;
+    }
+
+    private boolean detailReadBoundaryCurrent(long token, long boundary, int window) {
+        return running && token == generation && boundary == readBoundaryGeneration && window >= 0
+                && window == currentReadWindow() && unlocked() && TARGET.equals(foreground()) && timingPermitsRead();
+    }
+
+    private boolean semanticDetailCurrent(Decision decision, long token) {
+        long age = System.currentTimeMillis() - decision.observedAtMs;
+        return decision == semanticDetailDecision && DetailOcrNavigation.isProposal(decision)
+                && age >= 0 && age < 1500 && detailReadBoundaryCurrent(token, semanticDetailBoundary, semanticDetailWindow)
+                // Both complete semantic reads already veto modal/error content. The final
+                // reversible-navigation guard checks the live window/root, not another slow
+                // traversal of every video descendant on the 200 ms Binder guard budget.
+                && detailOcrAnchorSafe(decision, getRootInActiveWindow());
     }
 
     private boolean tryDetailSettle(List<UiItem> nodes, List<UiItem> items, long observedAt,
@@ -1310,6 +1362,8 @@ public final class MonitorService extends AccessibilityService {
             busy = false; schedule(700); return;
         }
         store.appendEvent("ACTION_ROUTE", "local_debug_tap:display=0", 0);
+        store.appendEvent("INPUT_LATENCY", decision.action.name().toLowerCase(Locale.ROOT),
+                Math.max(0, System.currentTimeMillis() - decision.observedAtMs));
         long observedAge = System.currentTimeMillis() - decision.observedAtMs;
         if (observedAge < 0 || observedAge >= 3000) { busy = false; schedule(700); return; }
         long dispatchDeadline = SystemClock.elapsedRealtime() + Math.min(2000, 3000 - observedAge);
@@ -1333,7 +1387,9 @@ public final class MonitorService extends AccessibilityService {
                         if (result.guardRejection != Rejection.NONE)
                             store.appendEvent("LOCAL_INPUT_GUARD", result.guardRejection.code(), 0);
                         if (InputDispatchPolicy.mayReobserve(decision.action, result.success,
-                                result.outcomeUnknown, result.code, result.guardRejection)) {
+                                result.outcomeUnknown, result.code, result.guardRejection)
+                                || InputDispatchPolicy.mayReobserveNavigation(decision, result.success,
+                                    result.outcomeUnknown, result.code, result.guardRejection)) {
                             // The remote service explicitly returned before starting input. Discard
                             // this complete proposal; scan will obtain native facts/OCR and decide anew.
                             busy = false;
@@ -1358,7 +1414,7 @@ public final class MonitorService extends AccessibilityService {
                                         int expectedWindowId, long token, long pageToken, long expectedBoundary) {
         if (!running) return Rejection.MONITOR_STOPPED;
         if (token != generation) return Rejection.MONITOR_GENERATION_CHANGED;
-        if (pageToken != windowGeneration) return expectedBoundary == readBoundaryGeneration
+        if (pageToken != windowGeneration && !semanticDetailCurrent(decision, token)) return expectedBoundary == readBoundaryGeneration
                 ? Rejection.PAGE_CONTENT_CHANGED : Rejection.PAGE_BOUNDARY_CHANGED;
         if (!unlocked()) return Rejection.SCREEN_LOCKED;
         if (!TARGET.equals(foreground())) return Rejection.FOREGROUND_CHANGED;

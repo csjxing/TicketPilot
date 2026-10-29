@@ -18,7 +18,16 @@ public final class ActionPacing {
                 && "explicit_available_label".equals(decision.reason) && decision.target != null && decision.target.enabled;
         boolean sameRoundReentry = decision.action == Decision.Action.OPEN_TICKETS && decision.state == Decision.State.READY
                 && "verified_return_detail_entry".equals(decision.reason) && decision.target != null && decision.target.enabled;
-        return !retryPending && (verifiedAdvance || quantityAdvance || availableSelection || sameRoundReentry)
+        boolean verifiedSession = decision.action == Decision.Action.SELECT_SESSION && decision.state == Decision.State.PROBING
+                && "target_session_cell_verified".equals(decision.reason);
+        boolean firstEntry = decision.action == Decision.Action.OPEN_TICKETS && decision.state == Decision.State.READY
+                && "verified_initial_detail_entry".equals(decision.reason);
+        boolean verifiedProbe = decision.action == Decision.Action.PROBE_TIER && decision.state == Decision.State.PROBING
+                && "trial_selection_inventory_unknown".equals(decision.reason)
+                && decision.selectionEvidence != null && !decision.selectionEvidence.sessionUnavailable
+                && decision.selectionEvidence.observedAtMs == decision.observedAtMs;
+        return !retryPending && (verifiedAdvance || quantityAdvance || availableSelection || sameRoundReentry
+                || verifiedSession || firstEntry || verifiedProbe)
                 && decision.observedAtMs > 0 && age >= 0 && age < 3000
                 && decision.target != null && decision.target.hasBounds();
     }

@@ -9,10 +9,11 @@ public final class DetailOcrNavigation {
     public static boolean isProposal(Decision decision) {
         return decision != null && decision.state == Decision.State.READY
                 && decision.action == Decision.Action.OPEN_TICKETS
-                && "verified_return_detail_entry".equals(decision.reason)
+                && ("verified_return_detail_entry".equals(decision.reason)
+                    || "verified_initial_detail_entry".equals(decision.reason))
                 && decision.target != null && decision.target.source == UiItem.Source.OCR
                 && decision.target.enabled && decision.target.hasBounds()
-                && "缺货登记".equals(decision.target.text.trim());
+                && List.of("缺货登记", "立即购买", "立即预订", "购买").contains(decision.target.text.trim());
     }
 
     /** The full Engine return-context checks must precede this unique visible-label lookup. */

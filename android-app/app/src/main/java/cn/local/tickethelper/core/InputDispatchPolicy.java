@@ -35,6 +35,14 @@ public final class InputDispatchPolicy {
                     || action == Decision.Action.SELECT_SESSION);
     }
 
+    /** A rejected reversible entry can start a fresh read, never replay old coordinates. */
+    public static boolean mayReobserveNavigation(Decision decision, boolean success, boolean unknown,
+                                                 String code, Rejection reason) {
+        return DetailOcrNavigation.isProposal(decision) && !success && !unknown
+                && "dispatch_guard_rejected".equals(code)
+                && (reason == Rejection.PAGE_CONTENT_CHANGED || reason == Rejection.MAIN_GUARD_TIMEOUT);
+    }
+
     /** Only this exact service result proves that the scroll command was never started. */
     public static boolean mayReobserveDetailScroll(Decision.Action action, boolean success, boolean outcomeUnknown,
                                                     String resultCode, Rejection reason, DetailScrollPolicy.FrameCheck frame) {

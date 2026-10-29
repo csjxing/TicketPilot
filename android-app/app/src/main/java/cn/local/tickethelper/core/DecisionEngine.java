@@ -20,6 +20,7 @@ public final class DecisionEngine {
     private static final Pattern BLOCK = Pattern.compile("验证码|滑块验证|安全验证|人机验证|操作频繁|访问频繁|系统繁忙|网络异常|网络错误|网络连接失败|加载失败|请求失败|请登录|登录后|风险验证|拖动滑块|向右滑动|完成验证|身份验证|账户异常|账号异常");
     private final Clock clock;
     private String pendingFingerprint = "", contextFingerprint = "";
+    private String initialDetailFingerprint = "";
     private Decision lastDecision;
     private long contextUntilMs, observedAtMs;
     private static final long RETURN_CONTEXT_MS = 30_000;
@@ -35,7 +36,13 @@ public final class DecisionEngine {
     public DecisionEngine() { this(Clock.systemUTC()); }
     public DecisionEngine(Clock clock) { this.clock = clock == null ? Clock.systemUTC() : clock; }
 
+    /** Explicit start grants navigation only; SKU must independently verify the full session. */
+    public synchronized void allowInitialDetailNavigation(MonitorConfig config) {
+        initialDetailFingerprint = config != null && config.validate().isEmpty() ? fingerprint(config) : "";
+    }
+
     public synchronized void reset() {
+        initialDetailFingerprint = "";
         pendingFingerprint = ""; contextFingerprint = ""; contextUntilMs = 0; lastDecision = null;
         pendingReturnFingerprint = ""; pendingReturnProject = null; pendingReentry = false; clearReturnContext();
     }
@@ -44,10 +51,11 @@ public final class DecisionEngine {
     public synchronized void recordAction(Decision decision, long timestampMs) {
         if (decision == lastDecision && decision.action == Decision.Action.OPEN_TICKETS && !pendingFingerprint.isEmpty()) {
             // A return permit opens only this selector; it cannot authorize subsequent SKU facts.
-            if (!pendingReentry) {
+            if (!pendingReentry && !"verified_initial_detail_entry".equals(decision.reason)) {
                 contextFingerprint = pendingFingerprint;
                 contextUntilMs = timestampMs + 120_000;
             }
+            initialDetailFingerprint = "";
             clearReturnContext();
         }
         if (decision != null && decision.action == Decision.Action.BACK) {
@@ -183,7 +191,12 @@ public final class DecisionEngine {
                 && fingerprint.equals(returnFingerprint) && returnProject != null
                 && o.timestampMs >= returnFromMs && currentMs >= returnFromMs && o.timestampMs <= returnUntilMs
                 && CatalogParser.sameProject(returnProject, CatalogParser.projectFromPage(o.items, c.eventKeyword));
-        if (!scopeVisible && !inheritedScope && !returnScope) {
+        CatalogProject initialProject = !sku && fingerprint.equals(initialDetailFingerprint)
+                ? CatalogParser.projectFromPage(o.items, c.eventKeyword) : null;
+        boolean initialScope = !sku && titleMatches && dateMatches && initialProject != null
+                && c.city.equals(initialProject.city) && !DetailScrollPolicy.unsafePage(o.items)
+                && (timeMatches || !Pattern.compile("(?<!\\d)[0-2]\\d:[0-5]\\d(?!\\d)").matcher(all).find());
+        if (!scopeVisible && !inheritedScope && !returnScope && !initialScope) {
             // Native observation precedes OCR. Missing text must not destroy a still-live permit
             // before that same frame is fully read; an actual contradictory project/time does.
             CatalogProject currentProject = !sku && returnProject != null
@@ -195,17 +208,17 @@ public final class DecisionEngine {
         }
         if (!sku) {
             UiItem opener = exactButton(o.items, "立即购买", "立即预订", "选座购买", "缺货登记", "购买");
-            if (returnScope && opener != null && "缺货登记".equals(opener.text.trim()))
+            if ((returnScope || initialScope) && opener != null && "缺货登记".equals(opener.text.trim()))
                 opener = DetailOcrNavigation.uniqueEntry(o.items);
             if (opener == null) return result(Decision.State.UNKNOWN, "ticket_entry_not_verified");
             // BACK and re-entry form one refresh round. The user interval gates the next BACK,
             // while this one-time, identity-bound re-entry only waits for normal page settling.
-            if (returnScope ? o.timestampMs - returnFromMs < 500 : !intervalDue(c, o, lastNavigationMs))
+            if (returnScope ? o.timestampMs - returnFromMs < 150 : !initialScope && !intervalDue(c, o, lastNavigationMs))
                 return result(Decision.State.READY, "waiting_for_interval");
             pendingFingerprint = fingerprint;
             pendingReentry = returnScope;
             return result(Decision.State.READY, Decision.Action.OPEN_TICKETS, opener,
-                    returnScope ? "verified_return_detail_entry" : "verified_detail_entry");
+                    returnScope ? "verified_return_detail_entry" : initialScope ? "verified_initial_detail_entry" : "verified_detail_entry");
         }
         if (verified == null) {
             UiItem sessionTarget = sessionSelectionTarget(c, o.items);

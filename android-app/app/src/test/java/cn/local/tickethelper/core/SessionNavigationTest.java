@@ -77,6 +77,48 @@ public final class SessionNavigationTest {
         Observation stale = new Observation("cn.damai", sku(), now - 3001);
         assertEquals(Decision.Action.NONE, new DecisionEngine(clock).evaluate(config(), stale, 0).action);
     }
+    @Test public void explicitStartOpensDetailOnceWithoutInventingSessionEvidence() {
+        DecisionEngine engine = new DecisionEngine(clock);
+        engine.allowInitialDetailNavigation(config());
+        Decision open = engine.evaluate(config(), observation(detail(TITLE, "立即购买"), null), 0);
+        assertEquals(Decision.Action.OPEN_TICKETS, open.action);
+        assertEquals("verified_initial_detail_entry", open.reason);
+        engine.recordAction(open, now); clock.at += 200;
+        assertEquals(Decision.Action.NONE, engine.evaluate(config(), observation(detail(TITLE, "立即购买"), null), 0).action);
+        List<UiItem> noTitle = sku(); noTitle.remove(0);
+        assertEquals(Decision.Action.NONE, engine.evaluate(config(), observation(noTitle, null), 0).action);
+    }
+    @Test public void initialNavigationRejectsWrongTimeModalAndWrongCity() {
+        for (String extra : List.of("20:00", "确认登记", "验证码", "确认购买")) {
+            DecisionEngine engine = new DecisionEngine(clock); engine.allowInitialDetailNavigation(config());
+            List<UiItem> page = detail(TITLE, "立即购买"); page.add(node(extra, 500, "extra"));
+            assertNotEquals(Decision.Action.OPEN_TICKETS, engine.evaluate(config(), observation(page, null), 0).action);
+        }
+        DecisionEngine engine = new DecisionEngine(clock); engine.allowInitialDetailNavigation(config());
+        assertEquals(Decision.Action.NONE, engine.evaluate(config(), observation(detail("[杭州]演出测试2026巡回演唱会", "立即购买"), null), 0).action);
+        engine.reset();
+        assertEquals(Decision.Action.NONE, engine.evaluate(config(), observation(detail(TITLE, "立即购买"), null), 0).action);
+    }
+    @Test public void movingDecorationsDoNotValidateInventoryOrChangedEntry() {
+        DecisionEngine engine = new DecisionEngine(clock); engine.allowInitialDetailNavigation(config());
+        List<UiItem> a = detail(TITLE, "缺货登记");
+        a.set(2, item("缺货登记", 200, 1000, 500, 1040, false, UiItem.Source.OCR, ""));
+        a.add(node("弹幕甲", 50, "comment"));
+        Decision first = engine.evaluate(config(), observation(a, null), 0);
+        clock.at += 450;
+        List<UiItem> b = new ArrayList<>(a); b.set(3, node("弹幕乙", 50, "comment"));
+        Decision second = engine.evaluate(config(), observation(b, null), 0);
+        assertTrue(DetailNavigationRead.agrees(config(), first, a, second, b, clock.millis()));
+        b.add(node("确认登记", 600, "modal"));
+        assertFalse(DetailNavigationRead.agrees(config(), first, a, second, b, clock.millis()));
+        b.remove(b.size()-1);
+        Decision shifted = new Decision(second.state, second.action,
+                item("缺货登记", 201, 1000, 501, 1040, false, UiItem.Source.OCR, ""), second.reason, second.observedAtMs);
+        assertFalse(DetailNavigationRead.agrees(config(), first, a, shifted, b, clock.millis()));
+        assertFalse(DetailNavigationRead.agrees(config(), first, a, second, b, now + 3000));
+        assertFalse(DetailNavigationRead.agrees(config(), first, a,
+                new Decision(Decision.State.IN_STOCK, Decision.Action.SELECT_TIER, second.target, second.reason, second.observedAtMs), b, clock.millis()));
+    }
     @Test public void firstUnknownDetailCannotUseMissingTimeOrUnexecutedBackAsAuthority() {
         DecisionEngine engine = new DecisionEngine(clock);
         assertEquals(Decision.Action.NONE, engine.evaluate(config(), observation(detail(TITLE, "立即购买"), null), 0).action);
@@ -117,7 +159,7 @@ public final class SessionNavigationTest {
         DecisionEngine engine = new DecisionEngine(clock);
         Decision back = engine.evaluate(longCycle, observation(sku(), unavailable()), 0);
         assertEquals(Decision.Action.BACK, back.action); engine.recordAction(back, now);
-        clock.at += 499;
+        clock.at += 149;
         assertEquals(Decision.Action.NONE, engine.evaluate(longCycle, observation(detail(TITLE, "立即购买"), null), now).action);
         clock.at++;
         Decision open = engine.evaluate(longCycle, observation(detail(TITLE, "立即购买"), null), now);

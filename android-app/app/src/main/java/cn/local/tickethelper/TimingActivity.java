@@ -71,10 +71,10 @@ public final class TimingActivity extends Activity {
         compact(presets,"30分钟",30);compact(presets,"60分钟",60);compact(presets,"沿用停止时间",0);
         text(duration,"等待开售时，从开售开始计时；已经开售或现在开始时，从本次启动计时。最迟在演出开始或原停止时间结束。",13,MUTED,false);
 
-        LinearLayout rhythm=card();text(rhythm,"本机响应节奏",20,INK,true);
-        text(rhythm,"当前动作等待 "+seconds(config.minIntervalMs)+"–"+seconds(config.maxIntervalMs)+" 秒",14,MUTED,false);
-        fast=new CheckBox(this);fast.setText("改用快速节奏：0.5–1.5秒");fast.setTextSize(15);rhythm.addView(fast);
-        text(rhythm,"页面事件会及时触发读取；已核实的连续选票步骤可立即推进。一次只执行一个输入并确认结果，本地读取速度不代表服务器刷新频率。",13,MUTED,false);
+        LinearLayout rhythm=card();text(rhythm,"缺票时多久再查一次",20,INK,true);
+        text(rhythm,"当前缺票刷新间隔 "+seconds(config.minIntervalMs)+"–"+seconds(config.maxIntervalMs)+" 秒",14,MUTED,false);
+        fast=new CheckBox(this);fast.setText("使用快速刷新：0.5–1.5 秒");fast.setTextSize(15);rhythm.addView(fast);
+        text(rhythm,"这段等待只用于缺票重查。有票后的选场次、选票档、数量核对连续推进，不在每一步再等一轮。页面加载耗时另计；本地读取不等于服务器刷新。",13,MUTED,false);
 
         LinearLayout result=card();text(result,"保存后会怎样？",20,INK,true);
         preview=text(result,"",15,INK,false);
