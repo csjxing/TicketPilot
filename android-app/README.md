@@ -1,5 +1,11 @@
 # TicketPilot · 票务助手 Android · v0.2.8-preview / code25 已发布
 
+## 2026-10-29 v0.3.3-preview / code30: preserve detail-entry evidence
+
+Fixed a deterministic merge conflict matching the code29 `ticket_entry_not_verified` failure: when native accessibility started exposing the same shortage-registration footer label, the merge removed its OCR counterpart, while the narrow detail-navigation contract required that independent OCR evidence. The merge now retains OCR provenance only for that exact public-detail label. Multiple OCR entries, registration modals, SKU fields, identity, two-read freshness and final footer checks still reject unsafe navigation. Price, quantity and checkout deduplication are unchanged.
+
+Native collection now avoids parent/clickability queries for empty layout nodes that were discarded anyway; all descendants and retained evidence nodes are still visited. No inventory, order or payment gate was removed. Added three regression tests covering native-label appearance/disappearance, duplicate/modal rejection and unchanged price/checkout deduplication. 746 tests passed, Lint and debug APK build passed. Code30 is not yet installed or validated in a new continuous device run; the code29 six-cycle failure remains the latest live evidence. Pending payment and real opening-time precision remain unverified.
+
 ## 2026-10-29 v0.3.1-preview / code28: local history viewer
 
 Added My -> ticket history: newest-first local events, inventory/action/error filters and manual refresh. Reads run off the UI thread; at most 300 matching events shown from bounded local retention (~2000 events). Counts are observations, not polling rounds. Existing random min/max cooldown is preserved and each sampled delay is now logged. Equal bounds mean fixed waiting; permitted fresh forward actions do not gain an extra random wait. This is not a server request interval or an anti-detection claim. No credentials, screenshots or viewer details are added.

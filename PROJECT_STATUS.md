@@ -1,5 +1,11 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-29 v0.3.3-preview / code30: preserve detail-entry evidence
+
+Fixed a deterministic merge conflict matching the code29 `ticket_entry_not_verified` failure: when native accessibility started exposing the same shortage-registration footer label, the merge removed its OCR counterpart, while the narrow detail-navigation contract required that independent OCR evidence. The merge now retains OCR provenance only for that exact public-detail label. Multiple OCR entries, registration modals, SKU fields, identity, two-read freshness and final footer checks still reject unsafe navigation. Price, quantity and checkout deduplication are unchanged.
+
+Native collection now avoids parent/clickability queries for empty layout nodes that were discarded anyway; all descendants and retained evidence nodes are still visited. No inventory, order or payment gate was removed. Added three regression tests covering native-label appearance/disappearance, duplicate/modal rejection and unchanged price/checkout deduplication. 746 tests passed, Lint and debug APK build passed. Code30 is not yet installed or validated in a new continuous device run; the code29 six-cycle failure remains the latest live evidence. Pending payment and real opening-time precision remain unverified.
+
 ## 2026-10-29 21:33 code29 live regression: not stable
 
 User confirmed accessibility and granted another ten-minute exclusive window. Installed code29 APK was pulled and matched SHA256 `2ded9e3f4c715d80d19bf023404d7233f4e96532dda08bd0916dede9ae88378f`. System accessibility dump showed the service bound with no crashed service; screenshot subsequently showed connected. A UIAutomator inspection can transiently disturb accessibility, so do not interpret its immediate readiness text as a persistent permission failure. Normal preparation-page input connected the already-authorized Shizuku service; all three preparation items then showed complete.

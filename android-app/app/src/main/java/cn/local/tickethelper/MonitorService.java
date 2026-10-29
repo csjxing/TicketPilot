@@ -844,13 +844,7 @@ public final class MonitorService extends AccessibilityService {
     }
 
     private static List<UiItem> mergeReadItems(List<UiItem> nodes, List<UiItem> items) {
-        List<UiItem> merged = new ArrayList<>(nodes);
-        for (UiItem text : items) {
-            boolean duplicate = nodes.stream().anyMatch(n -> n.text.equals(text.text)
-                    && Math.abs(n.centerY() - text.centerY()) < 30 && Math.abs(n.centerX() - text.centerX()) < 50);
-            if (!duplicate) merged.add(text);
-        }
-        return merged;
+        return cn.local.tickethelper.core.ObservationMerge.merge(nodes, items);
     }
 
     private void deferChangedRead(long began) {
@@ -1585,13 +1579,17 @@ public final class MonitorService extends AccessibilityService {
         if (node.isVisibleToUser()) {
             String text = node.getText() == null ? "" : node.getText().toString().trim();
             if (text.isEmpty() && node.getContentDescription() != null) text = node.getContentDescription().toString().trim();
-            Rect rect = new Rect(); node.getBoundsInScreen(rect);
-            AccessibilityNodeInfo container = clickContainer(node, rect);
-            boolean selected = node.isSelected() || node.isChecked()
-                    || (container != null && (container.isSelected() || container.isChecked()));
             String resourceId = node.getViewIdResourceName() == null ? "" : node.getViewIdResourceName();
-            if (!text.isEmpty() || evidenceContainer(resourceId) || quantityEvidenceNode(node)) items.add(new UiItem(text, rect.left, rect.top, rect.right, rect.bottom,
-                    node.isEnabled(), container != null, selected, UiItem.Source.NODE, resourceId));
+            // Empty layout wrappers are not evidence. Do not perform parent Binder queries
+            // for nodes that will be discarded; still visit every child below.
+            if (!text.isEmpty() || evidenceContainer(resourceId) || quantityEvidenceNode(node)) {
+                Rect rect = new Rect(); node.getBoundsInScreen(rect);
+                AccessibilityNodeInfo container = clickContainer(node, rect);
+                boolean selected = node.isSelected() || node.isChecked()
+                        || (container != null && (container.isSelected() || container.isChecked()));
+                items.add(new UiItem(text, rect.left, rect.top, rect.right, rect.bottom,
+                        node.isEnabled(), container != null, selected, UiItem.Source.NODE, resourceId));
+            }
         }
         for (int i = 0; i < node.getChildCount(); i++) collect(node.getChild(i), items, depth + 1);
     }
