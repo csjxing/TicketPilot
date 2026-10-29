@@ -1,5 +1,9 @@
 # TicketPilot 开发进度与接手入口
 
+## v0.3.6 delivery state
+
+Source commit cad9525 is pushed to origin/main. Same-signature APK, Android source ZIP and cloud-release.json are prepared under exports/release-v0.3.6-preview. GitHub release UI navigation succeeded but DOM/form access timed out again; no assets were uploaded and no public release URL is verified. The new exclusive device-test request is unanswered, so code33 was not installed and no phone monitoring was started in this turn. Do not claim a measured speed improvement over code32 yet.
+
 ## 2026-10-29 v0.3.6-preview / code33: remove duplicated pacing
 
 Screenshot pacing now waits only the remainder of the existing 400ms capture cadence; time already spent recognizing the first frame counts toward the second-read wait. The platform cadence, two independent full reads, page/identity/geometry checks and freshness limits are unchanged. The same reader timestamp also paces ordinary monitor and verification captures.
