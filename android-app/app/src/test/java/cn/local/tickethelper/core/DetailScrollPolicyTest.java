@@ -12,14 +12,14 @@ public final class DetailScrollPolicyTest {
     }
     @Test public void commandIsOnlyDefaultDisplayFixedRelativeUpwardScroll() {
         DetailScrollPolicy.Plan plan = DetailScrollPolicy.forRoot(0, 0, 1200, 2700, 1200, 2700);
-        assertNotNull(plan); assertEquals(600, plan.x); assertEquals(1890, plan.startY); assertEquals(1026, plan.endY);
-        assertArrayEquals(new String[]{"/system/bin/input", "-d", "0", "swipe", "600", "1890", "600", "1026", "280"}, plan.command());
+        assertNotNull(plan); assertEquals(600, plan.x); assertEquals(1890, plan.startY); assertEquals(1539, plan.endY);
+        assertArrayEquals(new String[]{"/system/bin/input", "-d", "0", "swipe", "600", "1890", "600", "1539", "800"}, plan.command());
         assertFalse(Arrays.asList(plan.command()).contains("tap"));
         assertFalse(Arrays.asList(plan.command()).contains("keyevent"));
     }
     @Test public void liveInsetsStillUseRootRelativeGeometry() {
         DetailScrollPolicy.Plan plan = DetailScrollPolicy.forRoot(0, 100, 1200, 2600, 1200, 2700);
-        assertNotNull(plan); assertEquals(600, plan.x); assertEquals(1850, plan.startY); assertEquals(1050, plan.endY);
+        assertNotNull(plan); assertEquals(600, plan.x); assertEquals(1850, plan.startY); assertEquals(1525, plan.endY);
     }
     @Test public void invalidSmallOrModalFramesCannotSupplyArbitrarySwipeCoordinates() {
         for (int[] box : List.of(new int[]{-1,0,1200,2700}, new int[]{0,0,1201,2700}, new int[]{0,0,1200,2701},
@@ -47,5 +47,21 @@ public final class DetailScrollPolicyTest {
         assertTrue(DetailScrollPolicy.unsafePage(List.of(new UiItem("",0,0,100,50,true,false,false,
                 UiItem.Source.NODE,"cn.damai:id/unknown_dialog"))));
         assertFalse(DetailScrollPolicy.unsafePage(List.of(nativeItem("长沙 公开演唱会",false),nativeItem("缺货登记",false))));
+    }
+    private DetailScrollPolicy.FrameCheck check(List<UiItem> before, List<UiItem> after) {
+        return DetailScrollPolicy.checkFrame(10,11,5,5,3,3,100,before,after);
+    }
+    @Test public void nativeDifferenceCodesArePreciseAndStillRejectEveryMismatch() {
+        UiItem a=nativeItem("public",false),b=nativeItem("other",false);
+        assertEquals(DetailScrollPolicy.FrameCheck.NATIVE_TEXT_CHANGED,check(List.of(a),List.of(b)));
+        assertEquals(DetailScrollPolicy.FrameCheck.NATIVE_COUNT_CHANGED,check(List.of(a),List.of(a,b)));
+        assertEquals(DetailScrollPolicy.FrameCheck.NATIVE_ORDER_CHANGED,check(List.of(a,b),List.of(b,a)));
+        assertEquals(DetailScrollPolicy.FrameCheck.NATIVE_FLAGS_CHANGED,check(List.of(a),List.of(nativeItem("public",true))));
+        assertEquals(DetailScrollPolicy.FrameCheck.NATIVE_ID_CHANGED,check(List.of(a),List.of(new UiItem("public",0,0,100,50,true,false,false,UiItem.Source.NODE,"other-id"))));
+        assertEquals(DetailScrollPolicy.FrameCheck.NATIVE_GEOMETRY_CHANGED,check(List.of(a),List.of(new UiItem("public",1,0,100,50,true,false,false,UiItem.Source.NODE,"public-id"))));
+        assertEquals(DetailScrollPolicy.FrameCheck.NATIVE_MISSING,check(List.of(a),List.of()));
+        assertEquals(DetailScrollPolicy.FrameCheck.NATIVE_SOURCE_CHANGED,check(List.of(a),List.of(new UiItem("public",0,0,100,50,true,false,false,UiItem.Source.OCR,"public-id"))));
+        for(DetailScrollPolicy.FrameCheck reason:DetailScrollPolicy.FrameCheck.values())
+            assertTrue(reason.code().matches("[a-z_]{1,64}"));
     }
 }

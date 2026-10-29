@@ -16,6 +16,7 @@ public final class InputDispatchPolicy {
         OBSERVATION_STALE, OBSERVATION_FROM_FUTURE,
         TARGET_REFRESH_FAILED, TARGET_HIDDEN, TARGET_DISABLED, TARGET_WINDOW_CHANGED,
         TARGET_BOUNDS_CHANGED, TARGET_WINDOW_MISSING, TARGET_WINDOW_INACTIVE, TARGET_DISPLAY_CHANGED,
+        SCROLL_NATIVE_CHANGED,
         QUANTITY_CHANGED, SENSITIVE_TARGET, TARGET_PATH_UNVERIFIED;
 
         public String code() { return name().toLowerCase(java.util.Locale.ROOT); }
@@ -32,5 +33,13 @@ public final class InputDispatchPolicy {
                 && (reason == Rejection.PAGE_CONTENT_CHANGED || reason == Rejection.PAGE_BOUNDARY_CHANGED)
                 && (action == Decision.Action.PROBE_TIER || action == Decision.Action.SELECT_TIER
                     || action == Decision.Action.SELECT_SESSION);
+    }
+
+    /** Only this exact service result proves that the scroll command was never started. */
+    public static boolean mayReobserveDetailScroll(Decision.Action action, boolean success, boolean outcomeUnknown,
+                                                    String resultCode, Rejection reason, DetailScrollPolicy.FrameCheck frame) {
+        return action == Decision.Action.SCROLL_DETAIL && !success && !outcomeUnknown
+                && "dispatch_guard_rejected".equals(resultCode) && reason == Rejection.SCROLL_NATIVE_CHANGED
+                && DetailScrollPolicy.retryableNativeChange(frame);
     }
 }

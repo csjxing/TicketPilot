@@ -149,7 +149,7 @@ public final class ShizukuInputBridge {
             // A fresh tag prevents a delayed unbind of an old session from killing a new session.
             args = new Shizuku.UserServiceArgs(new ComponentName(context, ShellTapUserService.class))
                     .daemon(false).tag("ticket-tap-" + token).processNameSuffix("ticket_input")
-                    .version(2).debuggable(false);
+                    .version(3).debuggable(false);
             connection = new ServiceConnection() {
                 @Override public void onServiceConnected(ComponentName name, IBinder service) {
                     if (binding != Binding.this || !service.pingBinder()) { remove(Binding.this); return; }

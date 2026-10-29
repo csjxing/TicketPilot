@@ -91,6 +91,7 @@ public final class MonitorService extends AccessibilityService {
     private SaleTiming.Phase salePhase;
     private boolean reservationExitAttempted;
     private long detailSettleReadAfter;
+    private DetailScrollPolicy.FrameCheck lastDetailScrollFrameCheck;
     private String lastStatus = "";
     private int unknownCount, actionFailures;
     private final cn.local.tickethelper.core.ReadStability readRecovery = new cn.local.tickethelper.core.ReadStability();
@@ -397,7 +398,8 @@ public final class MonitorService extends AccessibilityService {
         generation++; engine.reset(); busy = false; running = true; targetSeen = false;
         startedAt = SystemClock.elapsedRealtime(); lastNavigationAt = 0; nextActionAt = 0;
         saleTiming = preparedTiming; salePhase = null; reservationExitAttempted = false;
-        lastCaptureAt = 0; detailSettleReadAfter = 0; unknownCount = 0; actionFailures = 0; readRecovery.reset(); inputReadRecovery.reset();
+        lastCaptureAt = 0; detailSettleReadAfter = 0; lastDetailScrollFrameCheck = null;
+        unknownCount = 0; actionFailures = 0; readRecovery.reset(); inputReadRecovery.reset();
         lastStatus = ""; transitionAction = Decision.Action.NONE; clearQuantityTransition(); scheduledAt = 0;
         getSystemService(NotificationManager.class).cancel(11);
         getSystemService(NotificationManager.class).cancel(12);
@@ -578,9 +580,6 @@ public final class MonitorService extends AccessibilityService {
             if (error != null) {
                 stop("页面截图或本地识别不可用，请在手机检查后重新开始。", "BLOCKED", error, true); return;
             }
-            // A BACK-scoped, one-shot reversible scroll is the sole content-only OCR exception.
-            // It accepts no stock/selection/click evidence, and preserves the original timestamp.
-            if (tryDetailSettle(nodes, items, observedAt, token, pageToken, boundaryToken, readWindow)) return;
             if (!valid(token, pageToken)) {
                 long currentPage = windowGeneration;
                 if (running && unlocked() && TARGET.equals(foreground())
@@ -601,7 +600,14 @@ public final class MonitorService extends AccessibilityService {
                                         && cn.local.tickethelper.core.ReadStability.sameNative(nodes, readNodes())) {
                                     store.appendEvent("READ_RECOVERY", "read_content_revalidated", SystemClock.elapsedRealtime() - began);
                                     acceptMonitorRead(nodes, items, evidence, observedAt, began, token, currentPage);
-                                } else deferChangedRead(began);
+                                } else {
+                                    // Only a failed complete-frame match may request the one-shot
+                                    // reversible settling scroll. Already stable detail frames never
+                                    // scroll; the old OCR can authorize only this narrow scroll purpose.
+                                    if (!matches && tryDetailSettle(nodes, items, observedAt, token,
+                                            pageToken, boundaryToken, readWindow)) return;
+                                    deferChangedRead(began);
+                                }
                             });
                 } else deferChangedRead(began);
                 return;
@@ -613,11 +619,13 @@ public final class MonitorService extends AccessibilityService {
     private boolean tryDetailSettle(List<UiItem> nodes, List<UiItem> items, long observedAt,
                                     long token, long pageToken, long boundaryToken, int readWindow) {
         if (!running || token != generation || liveOrderAttempt != null || quantityTransition.pending()
-                || transitionAction != Decision.Action.NONE) return false;
+                || transitionAction != Decision.Action.NONE || !engine.detailScrollMayPrepare(config)) return false;
         long currentPage = windowGeneration;
-        if (!valid(token, currentPage) || !DetailScrollPolicy.mayPrepareFrame(pageToken, currentPage,
+        DetailScrollPolicy.FrameCheck check = DetailScrollPolicy.checkFrame(pageToken, currentPage,
                 boundaryToken, readBoundaryGeneration, readWindow, currentReadWindow(),
-                System.currentTimeMillis() - observedAt, nodes, readNodes())) return false;
+                System.currentTimeMillis() - observedAt, nodes, readNodes());
+        if (check != DetailScrollPolicy.FrameCheck.VERIFIED) { logDetailScrollFrame(check); return false; }
+        if (!valid(token, currentPage)) return false;
         List<UiItem> merged = mergeReadItems(nodes, items);
         Decision proposal = engine.prepareDetailScroll(config, new Observation(TARGET, merged, observedAt));
         if (proposal == null) return false;
@@ -640,11 +648,13 @@ public final class MonitorService extends AccessibilityService {
             stop("详情稳定滚动的授权或区域无法核实，已暂停。", "UNKNOWN", "detail_scroll_anchor_unverified", true); return true;
         }
         store.appendEvent("DETAIL_SETTLE", "scroll_proposed_once", 0);
+        java.util.concurrent.atomic.AtomicReference<DetailScrollPolicy.FrameCheck> guardFrame =
+                new java.util.concurrent.atomic.AtomicReference<>(DetailScrollPolicy.FrameCheck.VERIFIED);
         ShizukuInputBridge.DispatchGuard guard = new ShizukuInputBridge.DispatchGuard() {
             private Rejection reason = Rejection.NONE;
             @Override public Rejection rejection() { return reason; }
             @Override public boolean allow() {
-                reason = detailScrollRejection(proposal, anchor, bounds, nodes, token, pageToken, boundaryToken, readWindow);
+                reason = detailScrollRejection(proposal, anchor, bounds, nodes, token, pageToken, boundaryToken, readWindow, guardFrame);
                 return reason == Rejection.NONE;
             }
         };
@@ -652,28 +662,32 @@ public final class MonitorService extends AccessibilityService {
             long age = System.currentTimeMillis() - observedAt;
             long deadline = SystemClock.elapsedRealtime() + Math.min(2000, Math.max(1, 3000 - age));
             inputBridge.scrollDetailUp(bounds.left, bounds.top, bounds.right, bounds.bottom, deadline, guard,
-                    result -> finishDetailSettle(proposal, token, result.success, result.outcomeUnknown, result.guardRejection));
+                    result -> finishDetailSettle(proposal, token, result.success, result.outcomeUnknown,
+                            result.code, result.guardRejection, guardFrame.get()));
         } else {
-            if (!guard.allow()) { finishDetailSettle(proposal, token, false, false, guard.rejection()); return true; }
+            if (!guard.allow()) {
+                finishDetailSettle(proposal, token, false, false, "gesture_guard_rejected", guard.rejection(), guardFrame.get()); return true;
+            }
             Path path = new Path(); path.moveTo(plan.x, plan.startY); path.lineTo(plan.x, plan.endY);
             GestureDescription gesture = new GestureDescription.Builder().setDisplayId(android.view.Display.DEFAULT_DISPLAY)
                     .addStroke(new GestureDescription.StrokeDescription(path, 0, DetailScrollPolicy.DURATION_MS)).build();
             boolean accepted = dispatchGesture(gesture, new GestureResultCallback() {
                 @Override public void onCompleted(GestureDescription description) {
-                    finishDetailSettle(proposal, token, true, false, Rejection.NONE);
+                    finishDetailSettle(proposal, token, true, false, "gesture_completed", Rejection.NONE, guardFrame.get());
                 }
                 @Override public void onCancelled(GestureDescription description) {
-                    finishDetailSettle(proposal, token, false, true, Rejection.NONE);
+                    finishDetailSettle(proposal, token, false, true, "gesture_cancelled_outcome_unknown", Rejection.NONE, guardFrame.get());
                 }
             }, handler);
-            if (!accepted) finishDetailSettle(proposal, token, false, false, Rejection.NONE);
+            if (!accepted) finishDetailSettle(proposal, token, false, false, "gesture_not_dispatched", Rejection.NONE, guardFrame.get());
         }
         return true;
     }
 
     private Rejection detailScrollRejection(Decision proposal, AccessibilityNodeInfo anchor, Rect bounds,
                                             List<UiItem> originalNative, long token, long pageToken,
-                                            long boundaryToken, int readWindow) {
+                                            long boundaryToken, int readWindow,
+                                            java.util.concurrent.atomic.AtomicReference<DetailScrollPolicy.FrameCheck> guardFrame) {
         if (!running) return Rejection.MONITOR_STOPPED;
         if (token != generation) return Rejection.MONITOR_GENERATION_CHANGED;
         if (!unlocked()) return Rejection.SCREEN_LOCKED;
@@ -682,9 +696,19 @@ public final class MonitorService extends AccessibilityService {
         if (!engine.detailScrollCurrent(proposal, config)) return Rejection.TARGET_PATH_UNVERIFIED;
         long currentPage = windowGeneration;
         if (boundaryToken != readBoundaryGeneration || readWindow != currentReadWindow()) return Rejection.PAGE_BOUNDARY_CHANGED;
-        if (!DetailScrollPolicy.mayPrepareFrame(pageToken, currentPage, boundaryToken, readBoundaryGeneration,
+        DetailScrollPolicy.FrameCheck frame = DetailScrollPolicy.checkFrame(pageToken, currentPage, boundaryToken, readBoundaryGeneration,
                 readWindow, currentReadWindow(), System.currentTimeMillis() - proposal.observedAtMs,
-                originalNative, readNodes())) return Rejection.PAGE_CONTENT_CHANGED;
+                originalNative, readNodes());
+        guardFrame.set(frame);
+        if (frame != DetailScrollPolicy.FrameCheck.VERIFIED) {
+            logDetailScrollFrame(frame);
+            if (DetailScrollPolicy.retryableNativeChange(frame)) return Rejection.SCROLL_NATIVE_CHANGED;
+            if (frame == DetailScrollPolicy.FrameCheck.FRAME_STALE) return Rejection.OBSERVATION_STALE;
+            if (frame == DetailScrollPolicy.FrameCheck.FRAME_FROM_FUTURE) return Rejection.OBSERVATION_FROM_FUTURE;
+            if (frame == DetailScrollPolicy.FrameCheck.BOUNDARY_CHANGED || frame == DetailScrollPolicy.FrameCheck.WINDOW_CHANGED)
+                return Rejection.PAGE_BOUNDARY_CHANGED;
+            return Rejection.TARGET_PATH_UNVERIFIED;
+        }
         if (!detailScrollRootSafe(anchor, bounds, readWindow)) return Rejection.TARGET_PATH_UNVERIFIED;
         return valid(token, currentPage) && boundaryToken == readBoundaryGeneration ? Rejection.NONE : Rejection.PAGE_BOUNDARY_CHANGED;
     }
@@ -699,14 +723,31 @@ public final class MonitorService extends AccessibilityService {
         return !bounds.isEmpty() && (expected == null || expected.equals(bounds));
     }
 
-    private void finishDetailSettle(Decision proposal, long token, boolean success, boolean unknown, Rejection rejection) {
+    private void logDetailScrollFrame(DetailScrollPolicy.FrameCheck frame) {
+        if (frame != lastDetailScrollFrameCheck) {
+            store.appendEvent("DETAIL_SETTLE_FRAME", frame.code(), 0); lastDetailScrollFrameCheck = frame;
+        }
+    }
+
+    private void finishDetailSettle(Decision proposal, long token, boolean success, boolean unknown,
+                                     String resultCode, Rejection rejection, DetailScrollPolicy.FrameCheck frame) {
         if (!running || token != generation) return;
-        engine.finishDetailScroll(proposal);
         if (rejection != Rejection.NONE) store.appendEvent("LOCAL_INPUT_GUARD", rejection.code(), 0);
         if (!success) {
+            if (engine.retryUnsentDetailScroll(proposal, config, success, unknown, resultCode, rejection, frame)) {
+                // The exact service response proves input never started. Obtain new OCR/native
+                // facts within the original permit and read-recovery budget; never replay this work.
+                store.appendEvent("DETAIL_SETTLE", "scroll_unsent_reobserve", 0);
+                busy = false; lastCaptureAt = 0;
+                detailSettleReadAfter = SystemClock.elapsedRealtime() + DetailScrollPolicy.SETTLE_READ_DELAY_MS;
+                status("滚动尚未执行，页面信息已变化；正在重新读取，不会沿用旧滚动方案。");
+                schedule(DetailScrollPolicy.SETTLE_READ_DELAY_MS); return;
+            }
+            engine.finishDetailScroll(proposal);
             stop("详情稳定滚动未能确认完成，已暂停；不会重复滚动。", unknown ? "UNKNOWN" : "BLOCKED",
                     "detail_scroll_input_unconfirmed", true); return;
         }
+        engine.finishDetailScroll(proposal);
         // No actionDone: preserve BACK's existing interval/cooldown and the fixed permit expiry.
         store.appendEvent("DETAIL_SETTLE", "scroll_command_completed", 0);
         busy = false; readRecovery.reset(); lastCaptureAt = 0;
@@ -1436,6 +1477,7 @@ public final class MonitorService extends AccessibilityService {
             if (decision.action == Decision.Action.BACK || (decision.action == Decision.Action.OPEN_TICKETS
                     && !"verified_return_detail_entry".equals(decision.reason)))
                 lastNavigationAt = System.currentTimeMillis();
+            if (decision.action == Decision.Action.BACK) lastDetailScrollFrameCheck = null;
         } else {
             if (decision.action == Decision.Action.INCREASE_QUANTITY) {
                 stop("加号操作未能确认完成，已暂停，不会重复该点击。", "UNKNOWN", "quantity_input_unconfirmed", true); return;

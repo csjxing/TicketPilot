@@ -245,6 +245,38 @@ public final class SessionNavigationTest {
         Decision fake = new Decision(Decision.State.READY, Decision.Action.SCROLL_DETAIL, null, "verified_return_detail_settle", clock.millis());
         assertFalse(engine.consumeDetailScroll(fake, config())); assertFalse(engine.detailScrollCurrent(fake, config()));
     }
+    @Test public void onlyTwoCertainUnsentNativeChangesCanObtainEntirelyNewOcrProposals() {
+        DecisionEngine engine = new DecisionEngine(clock); engine.recordAction(back(engine), now); clock.at += 600;
+        Observation oldFrame = observation(ocrDetail(), null);
+        Decision scroll = engine.prepareDetailScroll(config(), oldFrame); assertTrue(engine.consumeDetailScroll(scroll, config()));
+        for (int retry=0;retry<2;retry++) {
+            assertTrue(engine.retryUnsentDetailScroll(scroll,config(),false,false,"dispatch_guard_rejected",
+                    InputDispatchPolicy.Rejection.SCROLL_NATIVE_CHANGED,DetailScrollPolicy.FrameCheck.NATIVE_TEXT_CHANGED));
+            assertFalse(engine.detailScrollCurrent(scroll,config()));
+            assertNull(engine.prepareDetailScroll(config(),oldFrame));
+            clock.at += 350; oldFrame=observation(ocrDetail(),null);
+            scroll=engine.prepareDetailScroll(config(),oldFrame);assertNotNull(scroll);assertTrue(engine.consumeDetailScroll(scroll,config()));
+        }
+        assertFalse(engine.retryUnsentDetailScroll(scroll,config(),false,false,"dispatch_guard_rejected",
+                InputDispatchPolicy.Rejection.SCROLL_NATIVE_CHANGED,DetailScrollPolicy.FrameCheck.NATIVE_TEXT_CHANGED));
+        engine.finishDetailScroll(scroll); assertNull(engine.prepareDetailScroll(config(),observation(ocrDetail(),null)));
+    }
+    @Test public void unknownCompletedBoundaryAndNonServiceFailuresNeverRestoreScrollBudget() {
+        DecisionEngine engine = new DecisionEngine(clock); engine.recordAction(back(engine), now);clock.at+=600;
+        Decision scroll=engine.prepareDetailScroll(config(),observation(ocrDetail(),null));assertTrue(engine.consumeDetailScroll(scroll,config()));
+        assertFalse(engine.retryUnsentDetailScroll(scroll,config(),false,true,"dispatch_guard_rejected",InputDispatchPolicy.Rejection.SCROLL_NATIVE_CHANGED,DetailScrollPolicy.FrameCheck.NATIVE_TEXT_CHANGED));
+        assertFalse(engine.retryUnsentDetailScroll(scroll,config(),true,false,"command_completed",InputDispatchPolicy.Rejection.SCROLL_NATIVE_CHANGED,DetailScrollPolicy.FrameCheck.NATIVE_TEXT_CHANGED));
+        assertFalse(engine.retryUnsentDetailScroll(scroll,config(),false,false,"gesture_guard_rejected",InputDispatchPolicy.Rejection.SCROLL_NATIVE_CHANGED,DetailScrollPolicy.FrameCheck.NATIVE_TEXT_CHANGED));
+        assertFalse(engine.retryUnsentDetailScroll(scroll,config(),false,false,"dispatch_guard_rejected",InputDispatchPolicy.Rejection.PAGE_BOUNDARY_CHANGED,DetailScrollPolicy.FrameCheck.NATIVE_TEXT_CHANGED));
+        assertFalse(engine.retryUnsentDetailScroll(scroll,config(),false,false,"dispatch_guard_rejected",InputDispatchPolicy.Rejection.SCROLL_NATIVE_CHANGED,DetailScrollPolicy.FrameCheck.BOUNDARY_CHANGED));
+        assertNull(engine.prepareDetailScroll(config(),observation(ocrDetail(),null)));
+    }
+    @Test public void certainUnsentRetryNeverExtendsOriginalThirtySecondExpiry() {
+        DecisionEngine engine = new DecisionEngine(clock);engine.recordAction(back(engine),now);clock.at=now+29_900;
+        Decision scroll=engine.prepareDetailScroll(config(),observation(ocrDetail(),null));assertTrue(engine.consumeDetailScroll(scroll,config()));
+        assertTrue(engine.retryUnsentDetailScroll(scroll,config(),false,false,"dispatch_guard_rejected",InputDispatchPolicy.Rejection.SCROLL_NATIVE_CHANGED,DetailScrollPolicy.FrameCheck.NATIVE_FLAGS_CHANGED));
+        clock.at=now+30_001;assertNull(engine.prepareDetailScroll(config(),observation(ocrDetail(),null)));
+    }
 
     private static final class MutableClock extends Clock {
         long at; MutableClock(long at) { this.at = at; }

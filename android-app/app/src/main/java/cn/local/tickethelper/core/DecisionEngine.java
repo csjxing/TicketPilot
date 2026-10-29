@@ -29,6 +29,8 @@ public final class DecisionEngine {
     private boolean pendingReentry;
     private boolean detailScrollAvailable;
     private Decision pendingDetailScroll, consumedDetailScroll;
+    private int detailScrollUnsentRetries;
+    private long detailScrollReobserveAfterMs;
 
     public DecisionEngine() { this(Clock.systemUTC()); }
     public DecisionEngine(Clock clock) { this.clock = clock == null ? Clock.systemUTC() : clock; }
@@ -67,6 +69,7 @@ public final class DecisionEngine {
     public synchronized Decision prepareDetailScroll(MonitorConfig c, Observation o) {
         if (!returnPermitCurrent(c) || !detailScrollAvailable || o == null || !"cn.damai".equals(o.packageName)
                 || o.timestampMs < returnFromMs || clock.millis() - o.timestampMs < 0
+                || o.timestampMs <= detailScrollReobserveAfterMs
                 || clock.millis() - o.timestampMs >= 3000 || o.verifiedSelection != null
                 || DetailScrollPolicy.unsafePage(o.items)) return null;
         String all = join(o.items);
@@ -94,6 +97,23 @@ public final class DecisionEngine {
 
     public synchronized void finishDetailScroll(Decision decision) {
         if (decision == consumedDetailScroll) consumedDetailScroll = null;
+    }
+
+    public synchronized boolean detailScrollMayPrepare(MonitorConfig c) {
+        return returnPermitCurrent(c) && detailScrollAvailable;
+    }
+
+    /** Release only a certainly unexecuted reservation; every retry requires wholly new OCR. */
+    public synchronized boolean retryUnsentDetailScroll(Decision decision, MonitorConfig c, boolean success,
+                                                        boolean outcomeUnknown, String resultCode,
+                                                        InputDispatchPolicy.Rejection rejection, DetailScrollPolicy.FrameCheck frame) {
+        if (decision == null || decision != consumedDetailScroll || !returnPermitCurrent(c)
+                || detailScrollUnsentRetries >= DetailScrollPolicy.MAX_UNSENT_RETRIES
+                || !InputDispatchPolicy.mayReobserveDetailScroll(decision.action, success, outcomeUnknown,
+                    resultCode, rejection, frame)) return false;
+        detailScrollUnsentRetries++; consumedDetailScroll = null; pendingDetailScroll = null;
+        detailScrollReobserveAfterMs = Math.max(clock.millis(), decision.observedAtMs);
+        detailScrollAvailable = true; return true;
     }
 
     private boolean returnPermitCurrent(MonitorConfig c) {
@@ -288,6 +308,8 @@ public final class DecisionEngine {
     private void clearReturnContext() {
         returnFingerprint = ""; returnProject = null; returnFromMs = 0; returnUntilMs = 0;
         detailScrollAvailable = false; pendingDetailScroll = null; consumedDetailScroll = null;
+        detailScrollUnsentRetries = 0;
+        detailScrollReobserveAfterMs = 0;
     }
 
     private void captureReturnProject(MonitorConfig c, Observation o, String fingerprint) {

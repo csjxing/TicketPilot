@@ -4,9 +4,18 @@ import java.util.List;
 
 /** One fixed, reversible detail-settling gesture. Never a generic swipe or input command builder. */
 public final class DetailScrollPolicy {
-    public static final int DURATION_MS = 280;
+    public static final int DURATION_MS = 800;
     public static final long SETTLE_READ_DELAY_MS = 350;
+    public static final int MAX_UNSENT_RETRIES = 2;
     private DetailScrollPolicy() {}
+
+    /** No captured values are included: each code describes only the kind of mismatch. */
+    public enum FrameCheck {
+        VERIFIED, REVISION_ROLLED_BACK, BOUNDARY_CHANGED, WINDOW_CHANGED, FRAME_FROM_FUTURE, FRAME_STALE,
+        NATIVE_MISSING, NATIVE_COUNT_CHANGED, NATIVE_SOURCE_CHANGED, NATIVE_ORDER_CHANGED,
+        NATIVE_TEXT_CHANGED, NATIVE_ID_CHANGED, NATIVE_GEOMETRY_CHANGED, NATIVE_FLAGS_CHANGED;
+        public String code() { return name().toLowerCase(java.util.Locale.ROOT); }
+    }
 
     public static final class Plan {
         public final int x, startY, endY;
@@ -25,17 +34,67 @@ public final class DetailScrollPolicy {
                 || (long) (right - left) * 5 < (long) displayWidth * 4
                 || (long) (bottom - top) * 5 < (long) displayHeight * 4) return null;
         int height = bottom - top;
-        return new Plan(left + (right - left) / 2, top + height * 70 / 100, top + height * 38 / 100);
+        return new Plan(left + (right - left) / 2, top + height * 70 / 100, top + height * 57 / 100);
     }
 
     /** Content-only rebasing is usable exclusively for the one scroll, never a click/stock fact. */
     public static boolean mayPrepareFrame(long originalPage, long currentPage, long originalBoundary,
                                            long currentBoundary, int originalWindow, int currentWindow,
                                            long ageMs, List<UiItem> originalNative, List<UiItem> currentNative) {
-        return currentPage >= originalPage && originalBoundary == currentBoundary
-                && originalWindow >= 0 && originalWindow == currentWindow
-                && ageMs >= 0 && ageMs < ReadStability.MAX_FRAME_AGE_MS
-                && ReadStability.sameNative(originalNative, currentNative);
+        return checkFrame(originalPage, currentPage, originalBoundary, currentBoundary, originalWindow,
+                currentWindow, ageMs, originalNative, currentNative) == FrameCheck.VERIFIED;
+    }
+
+    public static FrameCheck checkFrame(long originalPage, long currentPage, long originalBoundary,
+                                        long currentBoundary, int originalWindow, int currentWindow,
+                                        long ageMs, List<UiItem> originalNative, List<UiItem> currentNative) {
+        if (currentPage < originalPage) return FrameCheck.REVISION_ROLLED_BACK;
+        if (originalBoundary != currentBoundary) return FrameCheck.BOUNDARY_CHANGED;
+        if (originalWindow < 0 || originalWindow != currentWindow) return FrameCheck.WINDOW_CHANGED;
+        if (ageMs < 0) return FrameCheck.FRAME_FROM_FUTURE;
+        if (ageMs >= ReadStability.MAX_FRAME_AGE_MS) return FrameCheck.FRAME_STALE;
+        if (originalNative == null || currentNative == null || originalNative.isEmpty() || currentNative.isEmpty()
+                || originalNative.size() >= 500 || currentNative.size() >= 500) return FrameCheck.NATIVE_MISSING;
+        if (originalNative.size() != currentNative.size()) return FrameCheck.NATIVE_COUNT_CHANGED;
+        for (int i = 0; i < originalNative.size(); i++) {
+            UiItem a = originalNative.get(i), b = currentNative.get(i);
+            if (a == null || b == null || a.source != UiItem.Source.NODE || b.source != UiItem.Source.NODE)
+                return FrameCheck.NATIVE_SOURCE_CHANGED;
+        }
+        if (ReadStability.sameNative(originalNative, currentNative)) return FrameCheck.VERIFIED;
+        // A reordered exact multiset is still rejected. Classify it separately without logging values.
+        boolean[] used = new boolean[currentNative.size()];
+        boolean sameSet = true;
+        for (UiItem a : originalNative) {
+            boolean found = false;
+            for (int i = 0; i < currentNative.size(); i++) if (!used[i] && sameItem(a, currentNative.get(i))) {
+                used[i] = true; found = true; break;
+            }
+            if (!found) { sameSet = false; break; }
+        }
+        if (sameSet) return FrameCheck.NATIVE_ORDER_CHANGED;
+        for (int i = 0; i < originalNative.size(); i++) {
+            UiItem a = originalNative.get(i), b = currentNative.get(i);
+            if (!a.text.equals(b.text)) return FrameCheck.NATIVE_TEXT_CHANGED;
+            if (!a.resourceId.equals(b.resourceId)) return FrameCheck.NATIVE_ID_CHANGED;
+            if (a.left != b.left || a.top != b.top || a.right != b.right || a.bottom != b.bottom)
+                return FrameCheck.NATIVE_GEOMETRY_CHANGED;
+            if (a.enabled != b.enabled || a.clickable != b.clickable || a.selected != b.selected)
+                return FrameCheck.NATIVE_FLAGS_CHANGED;
+        }
+        return FrameCheck.NATIVE_MISSING;
+    }
+
+    private static boolean sameItem(UiItem a, UiItem b) {
+        return a.text.equals(b.text) && a.resourceId.equals(b.resourceId) && a.left == b.left && a.top == b.top
+                && a.right == b.right && a.bottom == b.bottom && a.enabled == b.enabled
+                && a.clickable == b.clickable && a.selected == b.selected;
+    }
+
+    public static boolean retryableNativeChange(FrameCheck check) {
+        return check == FrameCheck.NATIVE_COUNT_CHANGED || check == FrameCheck.NATIVE_ORDER_CHANGED
+                || check == FrameCheck.NATIVE_TEXT_CHANGED || check == FrameCheck.NATIVE_ID_CHANGED
+                || check == FrameCheck.NATIVE_GEOMETRY_CHANGED || check == FrameCheck.NATIVE_FLAGS_CHANGED;
     }
 
     /** Conservative decoded-modal veto; unreadable/ambiguous identities never obtain a permit. */

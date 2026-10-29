@@ -1,6 +1,22 @@
 # TicketPilot 开发进度与接手入口
 
-## 最新真机更新：code25 已覆盖安装（2026-10-29）
+## 当前开发：v0.2.9-preview / code26 内部包（2026-10-29）
+
+用户反馈 code25 缺票返回详情后仍停止。本轮无线读取真实 history：`SELECT_SESSION → OUT_OF_STOCK → BACK → page_changed_during_read → DETAIL_SETTLE / scroll_proposed_once → LOCAL_INPUT_GUARD / page_content_changed → detail_scroll_input_unconfirmed`。该码来自滚动专用 frame 检查；不能直接断言为公共输入层要求页面版本相等。原检查将时效、原生节点数量/文字/范围等变化统成一个原因，现已拆成不含原文的封闭差异码。
+
+内部补丁保留严格原生核对，仅在服务明确确认尚未执行、结果不为未知且原因是原生变化时，允许原 30 秒许可内最多两次全新观察；旧帧不可复用，真实滚动仍最多一次。另修复稳定页面也会被无条件滚动的问题：只有原整帧复核不匹配时才尝试。主操作者手工发现原 32%/280ms 滑动会把标题和日期移出；新方案调整为 13%/800ms、随后 350ms 全新读取，Shizuku UserService 版本升 3 以重载更新后的策略。这些手工观察不计作助手自动滚动证据。
+
+完整 Android 检查 **735 项测试通过，0 失败/错误/跳过；Lint 0 错误、40 条警告；APK 构建成功**。内部 code26 已经无线正常覆盖安装，包管理器读回 code26；实际安装 APK 摘要核对结果存于本机私有回执。用户给定的 10 分钟窗口结束后已正常停止，读回 `armed=false`、亮屏超时 600000、接电保持亮屏 0；**本轮未运行完整自动循环，没有创建订单，code26 不算刷票修复验收通过**。新的 Shizuku 服务连接与首次进入详情导航仍待验证；首次无 BACK 许可的入口缺口尚未修复。
+
+本次修改尚为内部候选，未对外发布 v0.2.9。优先无线联调，未经本次确认不走文件中转站。公开最新仍为 v0.2.8/code25，下面为该版的历史安装和发布回执。
+
+### 公开源码调研与后续方向
+
+用户要求对照成熟抢票辅助，已核对 [RookieTree/DaMaiHelper 的控件查找与点击源码](https://github.com/RookieTree/DaMaiHelper/blob/master/app/src/main/java/com/rookie/damaihelper/Extensions.kt)、[mtrdong/DamaiHelper 历史适配说明](https://gitee.com/mtrdong/damai-helper/releases)、[Android UI Automator 元素等待](https://developer.android.com/training/testing/other-components/ui-automator)和[Appium 的空闲等待参数](https://appium.github.io/appium-uiautomator2-driver/latest/reference/settings/#waitforidletimeout)。开源样本按文字/资源 ID 找局部控件、短间隔有限重试和原生/手势点击；100ms 本地重试不等于服务器库存请求，也不证明兼容当前大麦或成功率。
+
+工程方向是把可逆导航、库存/数量判断、实际订单提交拆成不同证据范围：导航优先看明确项目和目标控件，SKU 按目标日期/票档/数量核实，提交与待付款保留一次订单和金额/观演人核验。避免每一步都依赖全屏像素和无关节点绝对静止；局部语义合同仍须取真实控件树或受限 OCR 证据，不能凭宣传或模型输出注册生产适配。模型用于配置、页面学习和异常说明，手机本地状态机承担正常循环。先补完整返入与首次入口，再做正向双票/待付款，不用测试数替代真机闭环。
+
+## 历史真机更新：code25 已覆盖安装（2026-10-29）
 
 用户明确“直接更新到手机”。本轮重新发现并核对同一台已配对 vivo，手机解锁、原内部 code24、`armed=false` 后，正常覆盖安装已发布的 **v0.2.8-preview / code25**，没有卸载或清数据。安装器返回成功，包管理器读回 code25；从手机实际安装路径拉取 APK 后，长度 **55,155,701 字节**、SHA-256 `189f550a1ec2c0302c865fc3bf001c25bf32360f03856a4b99c2df69f771ca4e` 与发布包一致。
 
