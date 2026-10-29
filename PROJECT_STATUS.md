@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-29 v0.3.5-preview / code32: second-read navigation refinement
+
+Code30 was installed and its pulled APK matched the prepared hash, but a fresh run still paused after two complete detail/selector/session/back cycles. Code31 added bounded, non-content stage diagnostics and was also installed with a matching APK. Its live run again paused after two cycles: diagnostics include window-boundary interruptions and second-read mismatches even when both decisions report the verified detail entry. No positive inventory or order was observed. The merge fix alone therefore does not establish stability.
+
+Code32 retains the merge fix and avoids unnecessary queries on discarded native layout nodes. It adds a narrow maximum four-pixel tolerance for OCR label edges in the reversible detail-navigation comparison, requiring both centers to remain strictly inside the intersection. Same text, project/city, two fresh reads, modal/SKU vetoes, final footer/root validation and all stock/order gates remain. Regression tests reject movement over four pixels, different labels, modals, expired frames and inventory actions. 748 tests passed, Lint and APK build passed. Geometry jitter is a candidate explanation for one rejection path, not a fully established cause of every pause.
+
+Normal code32 cover installation failed with User rejected permissions. The phone remains code31 and was explicitly paused with armed=false before the exclusive window ended. Code32 continuous-run validation is pending user installer confirmation and a new testing window. No display setting was modified, no viewer was chosen, and no order or payment occurred. GitHub code30 release form was prepared but no assets uploaded/published: browser control timed out and the native file chooser did not complete. Do not present the planned download URL as an available release.
+
 ## 2026-10-29 v0.3.3-preview / code30: preserve detail-entry evidence
 
 Fixed a deterministic merge conflict matching the code29 `ticket_entry_not_verified` failure: when native accessibility started exposing the same shortage-registration footer label, the merge removed its OCR counterpart, while the narrow detail-navigation contract required that independent OCR evidence. The merge now retains OCR provenance only for that exact public-detail label. Multiple OCR entries, registration modals, SKU fields, identity, two-read freshness and final footer checks still reject unsafe navigation. Price, quantity and checkout deduplication are unchanged.

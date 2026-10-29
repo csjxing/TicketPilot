@@ -113,7 +113,7 @@ public final class SessionNavigationTest {
         assertFalse(DetailNavigationRead.agrees(config(), first, a, second, b, clock.millis()));
         b.remove(b.size()-1);
         Decision shifted = new Decision(second.state, second.action,
-                item("缺货登记", 201, 1000, 501, 1040, false, UiItem.Source.OCR, ""), second.reason, second.observedAtMs);
+                item("缺货登记", 205, 1000, 505, 1040, false, UiItem.Source.OCR, ""), second.reason, second.observedAtMs);
         assertFalse(DetailNavigationRead.agrees(config(), first, a, shifted, b, clock.millis()));
         assertFalse(DetailNavigationRead.agrees(config(), first, a, second, b, now + 3000));
         assertFalse(DetailNavigationRead.agrees(config(), first, a,

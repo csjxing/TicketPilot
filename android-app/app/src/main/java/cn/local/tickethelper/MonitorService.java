@@ -634,7 +634,12 @@ public final class MonitorService extends AccessibilityService {
     private boolean trySemanticDetailRead(List<UiItem> nodes, List<UiItem> items, long observedAt,
                                           long began, long token, long boundary, int window) {
         if (!detailReadBoundaryCurrent(token, boundary, window) || quantityTransition.pending()
-                || transitionAction != Decision.Action.NONE || liveOrderAttempt != null) return false;
+                || transitionAction != Decision.Action.NONE || liveOrderAttempt != null) {
+            store.appendEvent("NAVIGATION_REVIEW", "boundary_" + (boundary == readBoundaryGeneration)
+                    + "_window_" + (window == currentReadWindow()) + "_transition_" + transitionAction.name()
+                    + "_event_" + lastWindowEventSummary, SystemClock.elapsedRealtime() - began);
+            return false;
+        }
         List<UiItem> firstItems = mergeReadItems(nodes, items);
         Decision first = engine.evaluate(config, new Observation(TARGET, firstItems, observedAt), lastNavigationAt);
         if (!DetailOcrNavigation.isProposal(first) || DetailScrollPolicy.unsafePage(firstItems)) {
@@ -643,16 +648,25 @@ public final class MonitorService extends AccessibilityService {
         }
         handler.postDelayed(() -> {
             if (token != generation) return;
-            if (!detailReadBoundaryCurrent(token, boundary, window)) { deferChangedRead(began); return; }
+            if (!detailReadBoundaryCurrent(token, boundary, window)) {
+                store.appendEvent("NAVIGATION_REVIEW", "second_boundary_" + lastWindowEventSummary, SystemClock.elapsedRealtime() - began);
+                deferChangedRead(began); return;
+            }
             List<UiItem> secondNodes = readNodes();
             long secondAt = System.currentTimeMillis();
             ocr.readGuarded(secondNodes, secondAt, (secondItems, evidence, proof, error) -> {
                 if (token != generation) return;
-                if (error != null || !detailReadBoundaryCurrent(token, boundary, window)) { deferChangedRead(began); return; }
+                if (error != null || !detailReadBoundaryCurrent(token, boundary, window)) {
+                    store.appendEvent("NAVIGATION_REVIEW", "second_read_boundary_" + lastWindowEventSummary, SystemClock.elapsedRealtime() - began);
+                    deferChangedRead(began); return;
+                }
                 List<UiItem> merged = mergeReadItems(secondNodes, secondItems);
                 Decision second = engine.evaluate(config, new Observation(TARGET, merged, secondAt), lastNavigationAt);
                 if (!DetailNavigationRead.agrees(config, first, firstItems, second, merged, System.currentTimeMillis())
-                        || !detailOcrAnchorSafe(second, getRootInActiveWindow())) { deferChangedRead(began); return; }
+                        || !detailOcrAnchorSafe(second, getRootInActiveWindow())) {
+                    store.appendEvent("NAVIGATION_REVIEW", "second_mismatch_" + second.reason, SystemClock.elapsedRealtime() - began);
+                    deferChangedRead(began); return;
+                }
                 semanticDetailDecision = second; semanticDetailBoundary = boundary; semanticDetailWindow = window;
                 readRecovery.reset();
                 store.appendEvent("READ_RECOVERY", "detail_semantics_revalidated", SystemClock.elapsedRealtime() - began);

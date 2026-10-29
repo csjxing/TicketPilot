@@ -20,7 +20,18 @@ public final class DetailNavigationRead {
         CatalogProject b = CatalogParser.projectFromPage(secondItems, config.eventKeyword);
         if (a == null || b == null || !config.city.equals(a.city) || !CatalogParser.sameProject(a, b)) return false;
         UiItem x = first.target, y = second.target;
-        return x.text.equals(y.text) && x.left == y.left && x.top == y.top
-                && x.right == y.right && x.bottom == y.bottom;
+        return sameFooterLabel(x, y);
+    }
+
+    /** OCR may move an edge a few pixels between full reads of an unchanged label.
+     * Both centers must remain inside both boxes; final root/footer validation remains required. */
+    static boolean sameFooterLabel(UiItem x, UiItem y) {
+        if (x == null || y == null || !x.text.equals(y.text) || !x.hasBounds() || !y.hasBounds()) return false;
+        if (Math.abs(x.left-y.left)>4 || Math.abs(x.top-y.top)>4
+                || Math.abs(x.right-y.right)>4 || Math.abs(x.bottom-y.bottom)>4) return false;
+        int left=Math.max(x.left,y.left), right=Math.min(x.right,y.right);
+        int top=Math.max(x.top,y.top), bottom=Math.min(x.bottom,y.bottom);
+        return x.centerX()>left && x.centerX()<right && y.centerX()>left && y.centerX()<right
+                && x.centerY()>top && x.centerY()<bottom && y.centerY()>top && y.centerY()<bottom;
     }
 }
