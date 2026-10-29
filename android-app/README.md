@@ -1,5 +1,14 @@
 # TicketPilot · 票务助手 Android · v0.2.8-preview / code25 已发布
 
+## 2026-10-29 v0.3.1-preview / code28: local history viewer
+
+Added My -> ticket history: newest-first local events, inventory/action/error filters and manual refresh. Reads run off the UI thread; at most 300 matching events shown from bounded local retention (~2000 events). Counts are observations, not polling rounds. Existing random min/max cooldown is preserved and each sampled delay is now logged. Equal bounds mean fixed waiting; permitted fresh forward actions do not gain an extra random wait. This is not a server request interval or an anti-detection claim. No credentials, screenshots or viewer details are added.
+
+740 existing unit tests passed; Lint and APK build passed. The new history screen is not yet device-validated. No phone test window is extended and no relay upload is authorized this round.
+
+Final code27 device evidence: installed APK SHA256 46b08eb8c3751c623f5d77da227220a895206ebd085f39f3c3d72174d7fc4b93; 18 automatic selector entries, 18 session selections, 17 returns, 39 OUT_OF_STOCK observations and 83 UNKNOWN observations. No IN_STOCK or BLOCKED events. Session-to-session cycle median 6.69s, range 4.61-12.81s (not the configured 0.5-1.5s cooldown). Normal timed stop recorded PAUSED at 08:53:40. No orders created; positive inventory, two-ticket checkout and pending payment remain unverified. These results supersede the in-progress installation notes below.
+
+
 ## 当前迭代：v0.3.0-preview / code27（2026-10-29）
 
 本轮围绕首抢导航、详情动态内容及连续动作等待重构手机本地流程，详见 `handoff/LOCAL_EXECUTION.md`：显式启动的一次详情入口许可与 SKU 场次证据分离；同窗口两次完整新鲜 OCR 的身份/入口一致性仅可用于可逆详情导航；新鲜场次选择及绑定场次证据的票档试选可跳过整轮等待；缺票返回重进最低稳定等待从 500ms 调至 150ms；OCR 采集最低间隔从 700ms 调至 400ms；增加输入观察年龄记录。普通监控仍不调用模型，没有放开生产下单适配名单。

@@ -1227,7 +1227,7 @@ public final class AdvancedSettingsActivity extends Activity {
         options.check(initial); customInputs.setVisibility(initial == custom.getId() ? View.VISIBLE : View.GONE);
         options.setOnCheckedChangeListener((g, id) -> customInputs.setVisibility(id == custom.getId() ? View.VISIBLE : View.GONE));
         TextView validation = text("", 13, Color.rgb(168, 61, 46), false); content.addView(validation, spaced(6));
-        addText(content, "这是操作间的等待；页面加载另需时间，不等于库存更新频率。", 12, MUTED, false, 8);
+        addText(content, "每次在这个范围内随机等待；两值相同则固定。有票后的连续选票不额外等待。页面加载另需时间，不等于服务器刷新频率。", 12, MUTED, false, 8);
         Button explain = button("AI 帮我理解怎么选", false, null); content.addView(explain, spaced(12));
         AlertDialog dialog = showSheet("检查速度", content, "取消", "保存速度");
         explain.setOnClickListener(v -> { dialog.dismiss(); openAiContext("配置建议", "检查速度",

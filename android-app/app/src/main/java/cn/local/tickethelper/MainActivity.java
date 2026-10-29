@@ -222,7 +222,7 @@ public final class MainActivity extends Activity {
         choice(lockAvailable?"发现票后下单，停在待付款":"自动下单 · 当前版本尚未适配",
                 lockAvailable?"核实票档、张数、观演人和金额后提交一次；付款由我完成。":"确认购买页和待付款页须通过当前大麦版本的真实适配后才能使用。",
                 preferredMode==MonitorConfig.Mode.LOCK_ORDER,lockAvailable,() -> {readCustomPace();preferredMode=MonitorConfig.Mode.LOCK_ORDER;render();});
-        add(body,"检查节奏",20,INK,true,28);
+        add(body,"随机刷新节奏",20,INK,true,28);
         LinearLayout speeds=row();
         paceChip(speeds,"快速","0.5–1.5秒",500,1500);paceChip(speeds,"常用","1–3秒",1000,3000);paceChip(speeds,"稳健","5–10秒",5000,10000);
         body.addView(speeds,space(12));
@@ -236,7 +236,7 @@ public final class MainActivity extends Activity {
             longer.addView(text("最长等待（秒）",12,MUTED,false));longer.addView(maximum,space(8));
             inputs.addView(shorter,weighted());LinearLayout.LayoutParams gap=weighted();gap.leftMargin=dp(12);inputs.addView(longer,gap);body.addView(inputs,space(9));
         }
-        add(body,"这是操作后的等待区间，页面加载另需时间。",12,MUTED,false,12);
+        add(body,"每次在最短与最长之间随机等待；两值相同则固定等待。有票后的连续选票不额外等一轮。页面加载另需时间。",12,MUTED,false,12);
         body.addView(textAction("让领航员解释怎么选  ↗", () -> openAi("配置建议","购票条件","请解释提醒、选票到确认页的区别，以及快速、常用、稳健的操作节奏。不要承诺服务器刷新频率或购票成功。")),space(12));
         preferenceError=text("",13,Color.rgb(184,51,63),false);body.addView(preferenceError,space(8));
         actionFooter("保存条件","仅保存设置，不会自动开始。",this::savePreferences);
@@ -363,13 +363,14 @@ public final class MainActivity extends Activity {
         menuRow("购票条件","有票后的动作与检查速度",() -> navigate("preferences"));
         menuRow("开售与回流票","等开售立即核查，或现在连续跟进30分钟",() -> startActivity(new Intent(this,TimingActivity.class)));
         menuRow("本次观演人","开始前预选，按当前票数保存到本机",this::openViewers);
+        menuRow("抢票记录","查看有票、缺票、操作和随机等待",() -> startActivity(new Intent(this,HistoryActivity.class)));
         menuRow("使用指南与记录","查步骤、查看运行结果",() -> navigate("help"));
         section("维护",null,"");
         menuRow("远程诊断","发到文件中转站，让电脑继续排查",() -> startActivity(new Intent(this,RelayActivity.class)));
         menuRow("应用更新与云端协作","安装更新和高级同步设置",() -> startActivity(new Intent(this,CloudActivity.class)));
         menuRow("高级工具","手动目标、兼容设置与导出",() -> openAdvanced("target"));
         menuRow("电脑接手与备份","源码、知识库与交接资料",() -> startActivity(new Intent(this,TransferActivity.class)));
-        add(body,"TicketPilot 0.3.0 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
+        add(body,"TicketPilot 0.3.1 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
         footer.setVisibility(View.GONE);
     }
 
@@ -380,6 +381,7 @@ public final class MainActivity extends Activity {
         section("最近状态",null,"");
         add(body,safeStatus(),14,INK,false,0);
         add(body,"已记录 "+store.historyCount()+" 次处理结果",12,MUTED,false,14);
+        menuRow("查看抢票记录","按时间查看结果与操作",() -> startActivity(new Intent(this,HistoryActivity.class)));
         menuRow("导出检查记录","保存本机检查结果用于排查",this::exportHistory);
         footer.setVisibility(View.GONE);
     }

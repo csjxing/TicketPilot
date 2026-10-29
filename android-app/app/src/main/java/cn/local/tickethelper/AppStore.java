@@ -385,9 +385,36 @@ public final class AppStore {
         }
     }
 
-    private static String stateLabel(String state) {
+    /** Bounded newest-first snapshot; viewer reads off the UI thread and never mutates history. */
+    public List<JSONObject> recentHistory(int limit) throws java.io.IOException {
+        synchronized (LOCK) {
+            ArrayDeque<JSONObject> events = new ArrayDeque<>();
+            if (!history.exists()) return new ArrayList<>();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(new FileInputStream(history), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    try {
+                        JSONObject event = new JSONObject(line);
+                        events.addFirst(event);
+                        if (events.size() > Math.max(1, Math.min(2200, limit))) events.removeLast();
+                    } catch (org.json.JSONException ignored) { /* A damaged line is not inventory evidence. */ }
+                }
+            }
+            return new ArrayList<>(events);
+        }
+    }
+
+    static String stateLabel(String state) {
         if (state == null) return "未知";
         switch (state) {
+            case "REFRESH_WAIT": return "随机等待";
+            case "ORDER_PENDING_PAYMENT": return "已核实待付款";
+            case "ORDER_SUBMIT_REQUEST": return "请求提交订单（尚未确认成功）";
+            case "ORDER_UNKNOWN": return "订单结果未知，请核查";
+            case "ORDER_REJECTED": return "订单未确认锁票";
+            case "ORDER_REVIEW": return "订单需要核查";
+            case "ACTION_FAILED": return "操作未完成";
+            case "READ_RECOVERY": return "正在重新读取";
             case "START_RECEIVED": return "收到开始操作";
             case "ARMED": return "已开始监控";
             case "PAUSED": return "已暂停";

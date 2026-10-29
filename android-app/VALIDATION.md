@@ -1,5 +1,14 @@
 # Android 构建与真机验收
 
+## 2026-10-29 v0.3.1-preview / code28: local history viewer
+
+Added My -> ticket history: newest-first local events, inventory/action/error filters and manual refresh. Reads run off the UI thread; at most 300 matching events shown from bounded local retention (~2000 events). Counts are observations, not polling rounds. Existing random min/max cooldown is preserved and each sampled delay is now logged. Equal bounds mean fixed waiting; permitted fresh forward actions do not gain an extra random wait. This is not a server request interval or an anti-detection claim. No credentials, screenshots or viewer details are added.
+
+740 existing unit tests passed; Lint and APK build passed. The new history screen is not yet device-validated. No phone test window is extended and no relay upload is authorized this round.
+
+Final code27 device evidence: installed APK SHA256 46b08eb8c3751c623f5d77da227220a895206ebd085f39f3c3d72174d7fc4b93; 18 automatic selector entries, 18 session selections, 17 returns, 39 OUT_OF_STOCK observations and 83 UNKNOWN observations. No IN_STOCK or BLOCKED events. Session-to-session cycle median 6.69s, range 4.61-12.81s (not the configured 0.5-1.5s cooldown). Normal timed stop recorded PAUSED at 08:53:40. No orders created; positive inventory, two-ticket checkout and pending payment remain unverified. These results supersede the in-progress installation notes below.
+
+
 ## 2026-10-29 08:43 后续真机复测（进行中）
 
 已拉取手机实际 APK，确认 08:42 安装的 code27 与当时修正版摘要一致；无障碍、通知和 Shizuku 在助手准备页均已核实完成。用户再次授权 10 分钟长沙缺票循环测试，仍不创建订单。通过助手“购票条件”正常保存快速节奏 0.5–1.5 秒，读回其他目标仍为 11 月 6 日 19:00、1680×2、上限3360、PREPARE。

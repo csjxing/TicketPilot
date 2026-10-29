@@ -1547,6 +1547,7 @@ public final class MonitorService extends AccessibilityService {
         if (!(success && decision.action == Decision.Action.OPEN_TICKETS && "verified_return_detail_entry".equals(decision.reason))) {
             long delay = ThreadLocalRandom.current().nextLong(config.minIntervalMs, config.maxIntervalMs + 1);
             nextActionAt = SystemClock.elapsedRealtime() + delay;
+            store.appendEvent("REFRESH_WAIT", "sampled_cooldown_ms_" + delay, 0);
         }
         // Fresh permitted forward steps get prompt readback; trial probes/navigation remain paced.
         boolean freshForward = success && ActionPacing.mayDispatch(decision, System.currentTimeMillis(),
