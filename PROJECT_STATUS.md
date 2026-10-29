@@ -1,5 +1,12 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-29 restored wireless session (installation pending)
+
+User reopened wireless debugging and granted 15 minutes. Rediscovered the known host and verified the saved model; package code28, unlocked, armed=false, Changsha 2026-11-06 19:00 / 1680 x 2 / 3360 / PREPARE / 500-1500ms. Latest user failure log contains ARMED then 13 UNKNOWN observations (page_changed_during_read, ending unstable_page), no dispatched navigation. Current secure accessibility setting confirms TicketPilot service OFF; app preparation page also shows accessibility missing and Shizuku not connected. The new start broadcast produced no start log, so no automatic test run is claimed.
+
+Manually searched sunyanzi and opened the official Changsha result; detail shows the matching project and dates, a city-level shortage label and shortage-registration entry. This is not target-tier two-seat inventory evidence. Rebuilt timing candidate plus a closed-code first-navigation diagnostic; 743 tests, Lint and build passed. Normal cover install is pending vivo system confirmation. Original display settings observed 600000/0 and left unchanged. No viewer selection, order creation or payment.
+
+
 ## 2026-10-29 v0.3.2 timing candidate: device validation blocked
 
 User reported unstable Changsha monitoring and authorized the specific 2026-11-06 19:00 Changsha target, 1680 x 2, total <=3360, to pending payment. Two viewers still require explicit phone selection. The known paired wireless endpoint is not connected and reconnect failed; no current screen, inventory or failure logs were obtained. A new exclusive device-test window is pending. No monitor or order was started.

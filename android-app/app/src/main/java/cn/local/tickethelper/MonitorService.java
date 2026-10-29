@@ -637,7 +637,10 @@ public final class MonitorService extends AccessibilityService {
                 || transitionAction != Decision.Action.NONE || liveOrderAttempt != null) return false;
         List<UiItem> firstItems = mergeReadItems(nodes, items);
         Decision first = engine.evaluate(config, new Observation(TARGET, firstItems, observedAt), lastNavigationAt);
-        if (!DetailOcrNavigation.isProposal(first) || DetailScrollPolicy.unsafePage(firstItems)) return false;
+        if (!DetailOcrNavigation.isProposal(first) || DetailScrollPolicy.unsafePage(firstItems)) {
+            store.appendEvent("NAVIGATION_REVIEW", "first_read_" + first.reason, 0);
+            return false;
+        }
         handler.postDelayed(() -> {
             if (token != generation) return;
             if (!detailReadBoundaryCurrent(token, boundary, window)) { deferChangedRead(began); return; }
