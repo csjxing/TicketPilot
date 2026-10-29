@@ -642,7 +642,6 @@ public final class MonitorService extends AccessibilityService {
                 List<UiItem> merged = mergeReadItems(secondNodes, secondItems);
                 Decision second = engine.evaluate(config, new Observation(TARGET, merged, secondAt), lastNavigationAt);
                 if (!DetailNavigationRead.agrees(config, first, firstItems, second, merged, System.currentTimeMillis())
-                        || DetailScrollPolicy.unsafePage(readNodes())
                         || !detailOcrAnchorSafe(second, getRootInActiveWindow())) { deferChangedRead(began); return; }
                 semanticDetailDecision = second; semanticDetailBoundary = boundary; semanticDetailWindow = window;
                 readRecovery.reset();
@@ -661,7 +660,7 @@ public final class MonitorService extends AccessibilityService {
     private boolean semanticDetailCurrent(Decision decision, long token) {
         long age = System.currentTimeMillis() - decision.observedAtMs;
         return decision == semanticDetailDecision && DetailOcrNavigation.isProposal(decision)
-                && age >= 0 && age < 1500 && detailReadBoundaryCurrent(token, semanticDetailBoundary, semanticDetailWindow)
+                && age >= 0 && age < 3000 && detailReadBoundaryCurrent(token, semanticDetailBoundary, semanticDetailWindow)
                 // Both complete semantic reads already veto modal/error content. The final
                 // reversible-navigation guard checks the live window/root, not another slow
                 // traversal of every video descendant on the 200 ms Binder guard budget.
