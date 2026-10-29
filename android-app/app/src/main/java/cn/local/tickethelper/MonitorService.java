@@ -95,6 +95,7 @@ public final class MonitorService extends AccessibilityService {
     private SaleTiming saleTiming;
     private SaleTiming.Phase salePhase;
     private boolean openingWakePending, openingInputPending;
+    private OpeningCountdownOverlay openingCountdown;
     private boolean reservationExitAttempted;
     private long detailSettleReadAfter;
     private DetailScrollPolicy.FrameCheck lastDetailScrollFrameCheck;
@@ -422,6 +423,7 @@ public final class MonitorService extends AccessibilityService {
         selectionStartGeneration++;
         boolean wasRunning = running;
         cancelAiPageRead();
+        if (openingCountdown != null) { openingCountdown.close(); openingCountdown = null; }
         running = false; busy = false; generation++; engine.reset(); handler.removeCallbacks(tick);
         clearQuantityTransition(); transitionAction = Decision.Action.NONE;
         saleTiming = null; salePhase = null;
@@ -550,9 +552,12 @@ public final class MonitorService extends AccessibilityService {
             store.appendEvent("SALE_TIMING", timing.phase.name().toLowerCase(Locale.ROOT), 0);
         }
         if (!timing.mayReadOfficialPage()) {
+            if (openingCountdown == null) openingCountdown = new OpeningCountdownOverlay(this);
+            openingCountdown.update(config.saleAt, timing.untilSaleMs);
             if (!timing.statusText().equals(lastStatus)) status(timing.statusText());
             schedule(timing.nextWakeMs); return;
         }
+        if (openingCountdown != null) { openingCountdown.close(); openingCountdown = null; }
         if (openingWakePending && config.saleAt != null) {
             openingWakePending = false;
             store.appendEvent("OPENING_WAKE", "local_clock_lateness", Math.max(0, System.currentTimeMillis()-config.saleAt.toEpochMilli()));

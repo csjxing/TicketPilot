@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-30 v0.3.7-preview / code34 countdown overlay
+
+Added a touch-through accessibility overlay during the existing WAITING_FOR_SALE phase on Damai. It uses the same SaleTiming tick/remaining time as monitoring, displays HH:mm:ss.SSS and the configured opening timestamp in Asia/Shanghai, and indicates whether system automatic time is enabled. Text rendering is throttled to 50ms; the existing scheduler remains unchanged. The window is removed before official-page reads at opening, and on pause/stop/disconnect. It does not schedule taps, synchronize a server clock, bypass order gates, or imply millisecond order success. Pause remains available through the monitor notification.
+
+The user authorized one Yu Chengqing test order (2026-12-19 19:00, 980 x 2, 1960). One normal operator submission was sent after current visible checks and a private persistent attempt marker. The user reported success. Subsequent official order-list observation showed both matching orders as closed, so no current pending-payment state or payment deadline is verified. No second submission or payment was performed. This is operator workflow evidence, not automatic TicketPilot checkout acceptance. Actual post-submit capture first showed the desktop; the transition cause is unverified.
+
+Code34 unit checks, Lint/build and device overlay validation are tracked separately; initial build passed before the settings explanation change. Production checkout registry remains empty. User preselection was genuinely present in Damai; do not demand duplicate entry based solely on empty local app preferences. Public artifacts exclude all attendee/order identifiers.
+
 ## 2026-10-30 real confirmation and preselection audit
 
 The user explicitly confirmed that the attendees were already preselected in Damai and authorized other concerts for flow validation. Live Changsha project booking-guide UI displayed two preselected attendees. This supersedes the mistaken inference that empty TicketPilot viewer preferences meant the user had not selected attendees. Do not copy identities into public artifacts.

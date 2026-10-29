@@ -63,7 +63,7 @@ public final class TimingActivity extends Activity {
         startModes.addView(nowMode);startModes.addView(scheduledMode);when.addView(startModes);
         openingFields=column();when.addView(openingFields);
         dateButton=button(openingFields,"",false,this::pickDate);timeButton=button(openingFields,"",false,this::pickTime);
-        text(openingFields,"这里是你的本机计划，请按大麦显示的官方开售时间选择；时间统一按北京时间。",12,MUTED,false);
+        text(openingFields,"启动后，大麦上会显示开票倒计时。跟随手机系统时间；建议开启系统自动日期和时间。毫秒显示不代表服务器校时或下单保证。",12,MUTED,false);
 
         LinearLayout duration=card();text(duration,"持续关注多久？",20,INK,true);
         minutes=new EditText(this);minutes.setInputType(InputType.TYPE_CLASS_NUMBER);minutes.setSingleLine(true);
