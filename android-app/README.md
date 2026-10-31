@@ -1,6 +1,6 @@
 # TicketPilot · 票务助手 Android
 
-当前开发候选为 v0.3.13-preview / code40；手机最近核实安装为 v0.3.12-preview / code39。自动下单到待付款尚未验收，当前普通入口保持禁用。真实确认页适配及一次提交验收工具见 [下单联调](handoff/CHECKOUT_ACCEPTANCE.md)。APK 发布、手机安装和实际下单分别以根目录 PROJECT_STATUS.md 的最新记录为准。
+当前开发版 v0.3.13-preview / code40 已在同一台 vivo 正常覆盖安装，手机读回 APK 与冻结包一致。自动下单到待付款尚未验收，当前普通入口保持禁用。用户已停止庾澄庆样例测试，当前孙燕姿广州两场为暂停草稿；详细边界见 [下单联调](handoff/CHECKOUT_ACCEPTANCE.md)。APK 发布、手机安装和实际下单分别以根目录 PROJECT_STATUS.md 的最新记录为准。
 
 ## 大麦内浮层
 

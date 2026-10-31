@@ -1,5 +1,13 @@
 # Android 构建与真机验收
 
+## 2026-10-31 code40 wireless installation and Guangzhou catalog follow-up
+
+User confirmed the vivo installer; installed code40 APK was read back and matched the frozen release (56,234,433 bytes; SHA256 08aa61b381c91cfe8a5f0904c16b92334404d22574461d26efc0d1a9b91f2168). Accessibility was bound and the existing authorized Shizuku input connected via the preparation UI. No uninstall or data clearing.
+
+The user explicitly stopped Yu Chengqing tests. No checkout probe/acceptance submit was invoked. Normal operator navigation exited the old confirmation page and opened Sun Yanzi Guangzhou. The official reservation page showed November 3 at 14:00 China as opening. November 27 was initially rejected with in_place_selection_unverified while the chosen card was clipped; exposing the complete card via normal scrolling allowed the helper to read the exact session, five tiers and opening time. Review/save produced a November 27 19:00 PREPARE draft with 1380/1680, two tickets, maximum3360. Both Guangzhou dates and Changsha remain in the saved library; normal switching to November 27 passed. Both Guangzhou drafts retain openingPrice1680. These drafts are not purchase authorization or stock evidence.
+
+Final armed=false, PREPARE, no app order journal. Original display settings restored and read back. No reservation submission, monitor start, order or payment. Native checkout binding, app submission and pending-payment recognition remain untested; the catalog viewport issue remains a usability gap rather than a completed stability fix. Only documentation changed after installation; no new APK version was made.
+
 ## 2026-10-31 v0.3.13-preview / code40: actual confirmation adaptation candidate
 
 Fresh operator navigation on the paired vivo reached the real Yu Chengqing Hangzhou confirmation page: December 19 at 19:00, 980 x 2, payable 1960. The current two attendee checkboxes were both unchecked; nobody was chosen on the user's behalf. The native diagnostic captured 112 complete nodes on Damai 9.0.37#109003700. No submit or payment was performed.
