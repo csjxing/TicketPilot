@@ -86,7 +86,7 @@ public final class CheckoutFrameReader {
             UiItem item = new UiItem(text, bounds.left, bounds.top, bounds.right, bounds.bottom,
                     node.isEnabled(), node.isClickable(), node.isSelected(), UiItem.Source.NODE, node.getViewIdResourceName());
             nodes.add(new CheckoutFrame.Node(key, parent, item, node.isVisibleToUser(), node.isChecked(),
-                    node.isCheckable(), sensitive, windowId));
+                    node.isCheckable(), sensitive, windowId, node.isScrollable()));
             int childCount = node.getChildCount();
             if (childCount > MAX_NODES - nodes.size()) { complete = false; return; }
             for (int i = 0; complete && i < childCount; i++) {
@@ -104,6 +104,7 @@ public final class CheckoutFrameReader {
             UiItem x = a.item, y = b.item;
             if (!a.key.equals(b.key) || !a.parentKey.equals(b.parentKey) || a.windowId != b.windowId
                     || a.visible != b.visible || a.checked != b.checked || a.checkable != b.checkable || a.sensitive != b.sensitive
+                    || a.scrollable != b.scrollable
                     || !x.text.equals(y.text) || !x.resourceId.equals(y.resourceId) || x.left != y.left || x.top != y.top
                     || x.right != y.right || x.bottom != y.bottom || x.enabled != y.enabled || x.clickable != y.clickable
                     || x.selected != y.selected || x.source != y.source) return false;

@@ -1,5 +1,17 @@
 # Android 构建与真机验收
 
+## 2026-10-31 v0.3.13-preview / code40: actual confirmation adaptation candidate
+
+Fresh operator navigation on the paired vivo reached the real Yu Chengqing Hangzhou confirmation page: December 19 at 19:00, 980 x 2, payable 1960. The current two attendee checkboxes were both unchecked; nobody was chosen on the user's behalf. The native diagnostic captured 112 complete nodes on Damai 9.0.37#109003700. No submit or payment was performed.
+
+Added an explicit candidate for this observed native layout: exact named scopes and child paths read title, city, session, unit price, quantity, payable and submit. The displayed ticket line's unit times quantity is calculated, not falsely described as a separate native subtotal field. Payable must equal it exactly; changed fees or discounts reject. The complete non-scrollable native attendee scope supplies its row count; hidden, missing, changed or virtualized rows reject. This observed layout has a refund notice but no separate agreement checkbox; its exact notice remains required, new agreement controls/terms or paid-service labels block readiness. This is not a generic fallback for another layout/version or another refund rule.
+
+The final submit binding now resolves the unique reviewed page, marker, anchor and child path after the full facts read. It retains native ancestry, protection, exact label/geometry, window, generation and deadline checks, instead of repeating a whole-tree traversal. Real rebind latency and input are not yet measured.
+
+Debug-only, nonexported same-UID receivers provide a read-only parser probe and a separately invoked one-order live acceptance harness. The latter requires a fresh successful preview with two explicitly selected attendees, only the fixed 980 x 2 / 1960 Hangzhou sample, and fresh explicit operator/user approval before invocation. It uses the existing durable reservation, consumed permit, complete final re-read and one-input dispatcher; it does not modify the saved Guangzhou plan or register a production profile. There is no automatic retry or payment. See handoff/CHECKOUT_ACCEPTANCE.md. The production registry and normal automatic-order choice remain unavailable until actual pending-payment adaptation is verified.
+
+Candidate checks passed 788 tests, Lint and assemble. Wireless installation was cancelled while the phone was locked; installed version remains code39. The user has been asked to unlock for a retry. App-native parsing, test submission, pending recognition and automatic end-to-end checkout remain unverified. A synthetic mutation test suite is code coverage only, not device evidence.
+
 ## 2026-10-31 v0.3.12-preview / code39: catalog observation clock correction
 
 The live code38 installation was pulled back from the paired vivo and matched the frozen APK hash. Dragging the catalog title moved only the helper; right-edge collapse and tap-to-expand were observed on the real Guangzhou reservation page. A single selected December 4 session and all five visible prices (480/680/980/1380/1680) were read; the last tier was below the helper's scroll viewport, not missing from parsing. No plan was saved during that read.

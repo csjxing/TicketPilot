@@ -27,13 +27,18 @@ public final class CheckoutFrame {
     public static final class Node {
         public final String key, parentKey;
         public final UiItem item;
-        public final boolean visible, checked, checkable, sensitive;
+        public final boolean visible, checked, checkable, sensitive, scrollable;
         public final int windowId;
         public Node(String key, String parentKey, UiItem item, boolean visible, boolean checked,
                     boolean checkable, boolean sensitive, int windowId) {
+            this(key, parentKey, item, visible, checked, checkable, sensitive, windowId, false);
+        }
+        public Node(String key, String parentKey, UiItem item, boolean visible, boolean checked,
+                    boolean checkable, boolean sensitive, int windowId, boolean scrollable) {
             this.key = clean(key); this.parentKey = clean(parentKey); this.item = item;
             this.visible = visible; this.checked = checked; this.checkable = checkable;
             this.sensitive = sensitive; this.windowId = windowId;
+            this.scrollable = scrollable;
         }
     }
     private static String clean(String text) { return text == null ? "" : text.trim(); }

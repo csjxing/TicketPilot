@@ -54,15 +54,20 @@ public final class CheckoutPageParser {
             String[] ticketLine = profile.fields.containsKey(Role.UNIT_PRICE_QUANTITY) ? reader.priceQuantity() : null;
             long unit = money(ticketLine == null ? reader.value(Role.UNIT_PRICE) : ticketLine[0], false);
             int quantity = integer(ticketLine == null ? reader.value(Role.QUANTITY) : ticketLine[1], 1, 100);
-            long subtotal = money(reader.value(Role.TICKET_SUBTOTAL), false);
+            boolean observedNative = profile.native937Confirmation && page.kind == CheckoutObservation.Kind.CONFIRMATION;
+            if (observedNative && !city.equals(cn.local.tickethelper.catalog.CatalogParser.city(title)))
+                throw incomplete("native_confirmation_city_conflict");
+            long subtotal = observedNative ? Math.multiplyExact(unit, quantity) : money(reader.value(Role.TICKET_SUBTOTAL), false);
             long payable = money(reader.value(Role.PAYABLE), false);
             if (Math.multiplyExact(unit, quantity) != subtotal || payable != subtotal)
                 throw incomplete("amount_relationship_unverified");
-            reader.exact(Role.EXTRAS_STATUS);
-            if (money(reader.value(Role.EXTRA_FEE), true) != 0) throw incomplete("additional_charge_present");
+            if (!observedNative) {
+                reader.exact(Role.EXTRAS_STATUS);
+                if (money(reader.value(Role.EXTRA_FEE), true) != 0) throw incomplete("additional_charge_present");
+            }
 
             List<ViewerMatcher.ViewerRow> rows = reader.viewers();
-            int declaredRows = integer(reader.value(Role.VIEWER_COUNT), 1, 128);
+            int declaredRows = observedNative ? reader.completeNativeViewerCount() : integer(reader.value(Role.VIEWER_COUNT), 1, 128);
             boolean allRows = declaredRows == rows.size();
             ViewerMatcher.Result viewer = resolver == null ? null : resolver.resolve(List.copyOf(rows), allRows);
             boolean matchingCount = viewer != null && viewer.viewerCount == quantity;
@@ -79,7 +84,9 @@ public final class CheckoutPageParser {
                 if (!CheckoutProfile.isSubmitLabel(submit.item.text)) throw incomplete("native_submit_label_unverified");
                 // Disabled submit / unchecked terms are genuine facts useful for selecting a viewer.
                 // They are not repaired; the order engine independently requires all final gates.
-                observation.agreements(agreement.checkable && agreement.checked).submit(submit.item, true, CheckoutSubmitBinding.from(profile));
+                boolean agreements = observedNative ? reader.noUnprofiledAgreementControls()
+                        : agreement.checkable && agreement.checked;
+                observation.agreements(agreements).submit(submit.item, true, CheckoutSubmitBinding.from(profile));
             } else {
                 String reference = reader.value(Role.ORDER_REFERENCE);
                 if (!reference.matches("[A-Za-z0-9_-]{4,200}")) throw incomplete("order_reference_invalid");
@@ -360,6 +367,32 @@ public final class CheckoutPageParser {
                         control.checkable, control.sensitive));
             }
             return parsed;
+        }
+        int completeNativeViewerCount() {
+            List<CheckoutFrame.Node> scopes = new ArrayList<>();
+            for (CheckoutFrame.Node node : tree.nodes.values())
+                if (node.item.resourceId.equals("cn.damai:id/recycler_main") && tree.descendant(node, page)) scopes.add(node);
+            if (scopes.size() != 1) throw incomplete("viewer_scope_incomplete");
+            CheckoutFrame.Node scope = scopes.get(0); tree.usable(scope);
+            // A virtualized/scrollable list cannot prove that all possible selections were read.
+            if (scope.scrollable) throw incomplete("viewer_scope_scrollable");
+            int count = 0;
+            for (CheckoutFrame.Node node : tree.nodes.values()) if (node.parentKey.equals(scope.key)) {
+                tree.usable(node);
+                if (!node.item.resourceId.equals("cn.damai:id/layout_main")) throw incomplete("viewer_scope_changed");
+                count++;
+            }
+            if (count < 1 || count > 128) throw incomplete("viewer_scope_incomplete");
+            return count;
+        }
+        boolean noUnprofiledAgreementControls() {
+            for (CheckoutFrame.Node node : tree.nodes.values()) {
+                if (!tree.descendant(node, page)) continue;
+                if (node.checkable && !node.item.resourceId.equals("cn.damai:id/checkbox")) return false;
+                if (!node.sensitive && (node.item.text.contains("同意") || node.item.text.contains("保险")
+                        || node.item.text.contains("增值服务") || node.item.text.contains("服务包"))) return false;
+            }
+            return true;
         }
     }
 }

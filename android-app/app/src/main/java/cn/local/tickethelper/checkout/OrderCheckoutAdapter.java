@@ -15,6 +15,37 @@ public final class OrderCheckoutAdapter {
     private OrderCheckoutAdapter() { }
     private static final List<CheckoutProfile> VERIFIED_PROFILES = List.of();
 
+    /** Debug acceptance only: confirmation capture is not full checkout capability. */
+    public static CheckoutParseResult readConfirmationProbe(AccessibilityService service, LongSupplier generation,
+                                                            String attemptId, List<ViewerMatcher.RequestedViewer> viewers) {
+        if ((service.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0
+                || !Damai937Confirmation.VERSION.equals(installedVersion(service)) || !ViewerMatcher.validRequests(viewers))
+            return unavailable("confirmation_probe_unavailable", attemptId);
+        CheckoutFrame frame = CheckoutFrameReader.capture(service, installedVersion(service), generation);
+        return CheckoutPageParser.parse(frame, Damai937Confirmation.profile(), System.currentTimeMillis(),
+                (rows, complete) -> ViewerMatcher.matchMany(viewers, rows, complete), attemptId);
+    }
+
+    public static AccessibilityNodeInfo findConfirmationProbeSubmit(AccessibilityService service, VerifiedSubmitProposal proposal,
+                                                                     LongSupplier generation, long deadline) {
+        if ((service.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0
+                || !Damai937Confirmation.VERSION.equals(installedVersion(service)) || proposal == null
+                || proposal.submitBinding == null || !proposal.submitBinding.matchesProfile(Damai937Confirmation.profile())) return null;
+        return CheckoutNativeTarget.findStructuralSubmit(service, proposal.submitTarget, proposal.windowId,
+                proposal.submitBinding, generation, proposal.frameGeneration, deadline);
+    }
+
+    /** Read-only diagnostic of the same native binding, even before any attendees are selected. */
+    public static boolean probeConfirmationSubmitBinding(AccessibilityService service, CheckoutObservation observation,
+                                                         LongSupplier generation, long deadline) {
+        if ((service.getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0
+                || !Damai937Confirmation.VERSION.equals(installedVersion(service)) || observation == null
+                || observation.kind != CheckoutObservation.Kind.CONFIRMATION || observation.submitBinding == null
+                || !observation.submitBinding.matchesProfile(Damai937Confirmation.profile())) return false;
+        return CheckoutNativeTarget.findStructuralSubmit(service, observation.submitTarget, observation.windowId,
+                observation.submitBinding, generation, observation.frameGeneration, deadline) != null;
+    }
+
     /** Complete page-reading capability; this is not evidence that an order has been created. */
     public static boolean isLiveVerified() {
         return VERIFIED_PROFILES.stream().anyMatch(profile -> supportedVersion(profile.appVersion));

@@ -341,13 +341,40 @@ public final class MonitorService extends AccessibilityService {
     }
 
     public void arm() {
+        clearConfirmationTest();
         cancelAiPageRead();
         armInternal(null);
     }
 
     public void armForOrder(LockAuthorization authorization) {
+        clearConfirmationTest();
         cancelAiPageRead();
         armInternal(authorization);
+    }
+
+    private boolean confirmationTest;
+    private java.util.List<ViewerMatcher.RequestedViewer> confirmationTestViewers = java.util.List.of();
+    private MonitorConfig confirmationTestConfig;
+
+    /** Only a same-UID debug receiver may request this one fixed, freshly approved live acceptance case.
+     * It never changes the saved user's plan and never enables the production automatic-order choice.
+     * All normal durable reservation, amount, attendee, live rebinding and one-input gates remain.
+     */
+    public void armConfirmationTest(LockAuthorization authorization, java.util.List<ViewerMatcher.RequestedViewer> viewers) {
+        if (running || !connectionReady || authorization == null || LockAuthorization.viewerBindingsHash(viewers).isEmpty()
+                || (getApplicationInfo().flags & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) == 0) return;
+        MonitorConfig c = authorization.config;
+        if (c == null || !c.eventKeyword.contains("庾澄庆") || !c.city.equals("杭州") || !c.date.equals("2026-12-19")
+                || !c.time.equals("19:00") || !c.prices.equals(java.util.List.of(980)) || c.quantity != 2 || c.maxTotal != 1960
+                || c.mode != MonitorConfig.Mode.LOCK_ORDER || viewers.size() != 2
+                || !authorization.validFor(c, System.currentTimeMillis())
+                || !authorization.viewerBindingHash.equals(LockAuthorization.viewerBindingsHash(viewers))) return;
+        confirmationTest = true; confirmationTestConfig = c; confirmationTestViewers = java.util.List.copyOf(viewers);
+        cancelAiPageRead(); armInternal(authorization);
+    }
+
+    private void clearConfirmationTest() {
+        confirmationTest = false; confirmationTestConfig = null; confirmationTestViewers = java.util.List.of();
     }
 
     private void armInternal(LockAuthorization authorization) {
@@ -355,21 +382,22 @@ public final class MonitorService extends AccessibilityService {
         if (!connectionReady) return;
         closeInPlaceCatalog();
         if (catalog != null) catalog.cancelInternal(false);
-        config = store.loadConfig();
+        config = confirmationTest ? confirmationTestConfig : store.loadConfig();
         orderAuthorization = null; liveOrderAttempt = null; orderAttempts = null;
-        if (store.isImportedTargetPendingReview()) {
+        if (!confirmationTest && store.isImportedTargetPendingReview()) {
             pause("换机目标尚未核对，请在助手重新选择演出后开始。"); return;
         }
         if (config.mode == MonitorConfig.Mode.LOCK_ORDER) {
-            if (!OrderCheckoutAdapter.isLiveVerified()) {
+            if (!confirmationTest && !OrderCheckoutAdapter.isLiveVerified()) {
                 pause("自动下单的确认页及待付款页适配尚未真机验收，请先使用到确认页暂停模式。"); return;
             }
-            if (!OrderCheckoutAdapter.supportsInstalledVersion(this)) {
+            if (!confirmationTest && !OrderCheckoutAdapter.supportsInstalledVersion(this)) {
                 pause("当前大麦版本的订单页面尚未适配，请使用到确认页暂停模式。"); return;
             }
             if (authorization == null || !authorization.validFor(config, System.currentTimeMillis())
-                    || store.getViewerBindings().size() != config.quantity
-                    || !authorization.viewerBindingHash.equals(LockAuthorization.viewerBindingsHash(store.getViewerBindings()))) {
+                    || (confirmationTest ? confirmationTestViewers : store.getViewerBindings()).size() != config.quantity
+                    || !authorization.viewerBindingHash.equals(LockAuthorization.viewerBindingsHash(
+                            confirmationTest ? confirmationTestViewers : store.getViewerBindings()))) {
                 pause("请在助手中重新核对本次演出、预算及观演人，再主动开始自动下单。"); return;
             }
             try {
@@ -413,7 +441,8 @@ public final class MonitorService extends AccessibilityService {
         getSystemService(NotificationManager.class).cancel(11);
         getSystemService(NotificationManager.class).cancel(12);
         store.setArmed(true); store.appendEvent("ARMED", "user_started", 0);
-        status("已启动；请在 20 秒内打开大麦目标演出页。");
+        status(confirmationTest ? "正在验证一笔已明确批准的杭州测试订单；只提交一次，不付款。"
+                : "已启动；请在 20 秒内打开大麦目标演出页。");
         schedule(0);
     }
 
@@ -448,6 +477,7 @@ public final class MonitorService extends AccessibilityService {
             }
         }
         liveOrderAttempt = null;
+        clearConfirmationTest();
     }
 
     @Override public void onAccessibilityEvent(AccessibilityEvent event) {
@@ -577,7 +607,7 @@ public final class MonitorService extends AccessibilityService {
                 stop("界面读取或操作超时，任务已暂停。", "BLOCKED", "operation_timeout", true);
         };
         handler.postDelayed(watchdog, 8000);
-        if (liveOrderAttempt != null) {
+        if (confirmationTest || liveOrderAttempt != null) {
             handleOrderCheckout(token, pageToken); return;
         }
         List<UiItem> nodes = readNodes();
@@ -1031,9 +1061,10 @@ public final class MonitorService extends AccessibilityService {
 
     private boolean orderGrantCurrent() {
         return orderAuthorization != null && orderConfigRevision == store.getConfigRevision()
-                && orderAuthorization.validFor(store.loadConfig(), System.currentTimeMillis())
-                && store.getViewerBindings().size() == config.quantity
-                && orderAuthorization.viewerBindingHash.equals(LockAuthorization.viewerBindingsHash(store.getViewerBindings()));
+                && orderAuthorization.validFor(confirmationTest ? config : store.loadConfig(), System.currentTimeMillis())
+                && (confirmationTest ? confirmationTestViewers : store.getViewerBindings()).size() == config.quantity
+                && orderAuthorization.viewerBindingHash.equals(LockAuthorization.viewerBindingsHash(
+                        confirmationTest ? confirmationTestViewers : store.getViewerBindings()));
     }
 
     private CheckoutObservation readOrderPage() {
@@ -1041,6 +1072,8 @@ public final class MonitorService extends AccessibilityService {
     }
 
     private CheckoutParseResult readOrderPageResult() {
+        if (confirmationTest) return OrderCheckoutAdapter.readConfirmationProbe(this, () -> windowGeneration,
+                liveOrderAttempt == null ? "" : liveOrderAttempt.attemptId, confirmationTestViewers);
         return OrderCheckoutAdapter.read(this, () -> windowGeneration,
                 liveOrderAttempt == null ? "" : liveOrderAttempt.attemptId,
                 store.getViewerBindings());
@@ -1048,13 +1081,16 @@ public final class MonitorService extends AccessibilityService {
 
     private void handleOrderCheckout(long token, long pageToken) {
         if (!valid(token, pageToken)) { busy = false; schedule(700); return; }
-        if (!OrderCheckoutAdapter.isLiveVerified() || !orderGrantCurrent() || orderAttempts == null) {
+        if ((!confirmationTest && !OrderCheckoutAdapter.isLiveVerified()) || !orderGrantCurrent() || orderAttempts == null) {
             stop("自动下单适配或本次授权无法核实，已暂停。", "CHECKOUT", "order_adapter_or_grant_unverified", true); return;
         }
         try {
             CheckoutParseResult read = readOrderPageResult();
             store.appendEvent("ORDER_READ", read.reason, 0);
             OrderAttempt attempt = orderAttempts.read();
+            if (confirmationTest && attempt == null && !read.observation.viewerSelectionVerified) {
+                stop("本次提交测试需要先在大麦明确勾选两位观演人；尚未提交。", "CHECKOUT", "viewer_selection_unverified", true); return;
+            }
             if (attempt == null && read.viewerResult != null
                     && read.viewerResult.state == ViewerMatcher.State.SELECT_PROPOSAL) {
                 if (viewerSelectionTargets.containsKey(viewerTargetKey(read))) {
@@ -1249,13 +1285,15 @@ public final class MonitorService extends AccessibilityService {
     }
 
     private AccessibilityNodeInfo orderDispatchNode(VerifiedSubmitProposal proposal, long token, long pageToken) {
-        if (!OrderCheckoutAdapter.isLiveVerified() || !valid(token, pageToken) || !orderGrantCurrent()
+        if ((!confirmationTest && !OrderCheckoutAdapter.isLiveVerified()) || !valid(token, pageToken) || !orderGrantCurrent()
                 || liveOrderAttempt == null || orderAttempts == null || !orderInputFresh(proposal, token, pageToken)) return null;
         if (!orderEngine.revalidateForDispatch(config, orderAuthorization, readOrderPage(), proposal,
                 liveOrderAttempt, System.currentTimeMillis())) return null;
         if (!orderInputFresh(proposal, token, pageToken)) return null;
-        AccessibilityNodeInfo node = OrderCheckoutAdapter.findSubmitTarget(this, proposal, () -> windowGeneration,
-                SystemClock.elapsedRealtime() + 80);
+        long deadline = SystemClock.elapsedRealtime() + 150;
+        AccessibilityNodeInfo node = confirmationTest
+                ? OrderCheckoutAdapter.findConfirmationProbeSubmit(this, proposal, () -> windowGeneration, deadline)
+                : OrderCheckoutAdapter.findSubmitTarget(this, proposal, () -> windowGeneration, deadline);
         return node != null && orderInputFresh(proposal, token, pageToken) ? node : null;
     }
 

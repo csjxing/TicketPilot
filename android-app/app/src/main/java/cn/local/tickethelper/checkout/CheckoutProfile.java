@@ -90,16 +90,20 @@ public final class CheckoutProfile {
     public final ZoneId zoneId;
     public final Map<CheckoutObservation.Kind, Page> pages;
     public final Map<Role, Selector> fields;
+    /** Explicit contract of the observed native 9.0.37 confirmation layout, never a generic fallback. */
+    public final boolean native937Confirmation;
     private CheckoutProfile(Builder builder) {
         packageName = builder.packageName; appVersion = builder.appVersion; zoneId = builder.zoneId;
         pages = Collections.unmodifiableMap(new EnumMap<>(builder.pages));
         fields = Collections.unmodifiableMap(new EnumMap<>(builder.fields));
+        native937Confirmation = builder.native937Confirmation;
     }
     public static final class Builder {
         private final String packageName, appVersion;
         private final ZoneId zoneId;
         private final Map<CheckoutObservation.Kind, Page> pages = new EnumMap<>(CheckoutObservation.Kind.class);
         private final Map<Role, Selector> fields = new EnumMap<>(Role.class);
+        private boolean native937Confirmation;
         public Builder(String packageName, String appVersion, ZoneId zoneId) {
             this.packageName = clean(packageName); this.appVersion = clean(appVersion); this.zoneId = zoneId;
             if (this.packageName.isEmpty() || this.appVersion.isEmpty() || zoneId == null)
@@ -131,6 +135,12 @@ public final class CheckoutProfile {
             if (role == Role.SUBMIT && (selector.match != Selector.Match.EXACT || !isSubmitLabel(selector.exactLabel)))
                 throw new IllegalArgumentException("explicit_submit_label_required");
             if (fields.put(role, selector) != null) throw new IllegalArgumentException("duplicate_role");
+            return this;
+        }
+        Builder native937Confirmation() {
+            if (!"cn.damai".equals(packageName) || !"9.0.37#109003700".equals(appVersion))
+                throw new IllegalArgumentException("native_confirmation_version_mismatch");
+            native937Confirmation = true;
             return this;
         }
         public CheckoutProfile build() {
