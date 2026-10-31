@@ -1,5 +1,11 @@
 # TicketPilot 开发进度与接手入口
 
+## code38 handoff checkpoint
+
+Final code38 checks passed: 780 tests, no failures/errors, Lint and APK build. Source b9ae4f3 is pushed to main and the same-signature APK/source ZIP/manifest are frozen under exports/release-v0.3.11-preview. Code38 wireless cover installation was cancelled by the phone installer (User rejected permissions); the phone remains code36/v0.3.9 and subsequently had a black/asleep screen. User was asked to unlock/reconnect power for a fresh normal installation and to confirm the installer. New drag/dock/countdown UI has not been tested on device. No Guangzhou plan has yet been saved; no monitoring, reservation, order or payment was started.
+
+GitHub independent browser navigation recovered. The v0.3.11 release form was filled and pre-release selected, but the supported file-chooser flow timed out before setFiles. No binary was uploaded or release published; browser troubleshooting directs the user to the extension's Allow access to file URLs setting. The operator did not change that permission. Save draft completed: the browser URL is https://github.com/csjxing/TicketPilot/releases/edit/untagged-e9b2dbc49ed2e349feb8 . The edit form has no uploaded assets. Keep editing this existing draft instead of creating another release. Do not repeat a create/publish operation without checking the draft. No public code38 download URL is verified. File relay was not used.
+
 ## 2026-10-31 v0.3.11-preview / code38: movable overlays and selected-session countdown
 
 Both the Damai catalog panel and waiting-for-sale countdown now have a drag handle and a right-edge compact mode. Taps on the compact handle expand; dragging only updates the helper window, never sends input to Damai. The catalog pill no longer spans nearly the whole screen. The selected-session panel displays HH:mm:ss.SSS after a future opening announcement is read from the same fresh, scoped reservation frame; no clock is invented when the label cannot be read. Saving the reviewed catalog plan carries that timestamp into its own schedule. Starting monitoring retains the existing timer ownership and stop/cleanup rules. Text updates are throttled to 50ms and use phone system time; this is not server calibration or a millisecond order guarantee.
