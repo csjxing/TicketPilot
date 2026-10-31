@@ -29,6 +29,12 @@ public class SavedPlansTest {
         assertEquals(MonitorConfig.Mode.PREPARE,saved.mode);assertTrue(saved.timingSpecified);assertNull(saved.saleAt);
         String json=SavedPlans.write(List.of(c));assertFalse(json.contains("viewer"));assertFalse(json.contains("LOCK_ORDER"));
     }
+    @Test public void openingTierStrategyRoundTripsAndOldLibraryDefaultsToOrdinaryMonitoring() {
+        MonitorConfig c=plan("广州","2026-11-27",1680,MonitorConfig.Mode.PREPARE).withOpeningPrice(1680);
+        String encoded=SavedPlans.write(List.of(c));
+        assertEquals(1680,SavedPlans.read(encoded).get(0).openingPrice);
+        assertEquals(0,SavedPlans.read(encoded.replace(",\"openingPrice\":1680","").replace("\"openingPrice\":1680,","")).get(0).openingPrice);
+    }
     @Test public void invalidDraftDoesNotOverwriteArchivedPlan() {
         MonitorConfig old=plan("长沙","2026-11-06",1680,MonitorConfig.Mode.PREPARE);
         MonitorConfig empty=new MonitorConfig("","","","",List.of(),1,0,null,500,1500,MonitorConfig.Mode.ALERT);

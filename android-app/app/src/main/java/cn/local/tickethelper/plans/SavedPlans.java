@@ -17,7 +17,7 @@ public final class SavedPlans {
     public static MonitorConfig draft(MonitorConfig c) {
         return new MonitorConfig(c.eventKeyword,c.city,c.date,c.time,c.prices,c.quantity,c.maxTotal,
                 c.deadline,c.minIntervalMs,c.maxIntervalMs,c.mode==MonitorConfig.Mode.LOCK_ORDER?MonitorConfig.Mode.PREPARE:c.mode,
-                c.saleAt,c.followUpMinutes);
+                c.saleAt,c.followUpMinutes).withOpeningPrice(c.openingPrice);
     }
     public static List<MonitorConfig> read(String raw) {
         try {
@@ -32,7 +32,7 @@ public final class SavedPlans {
                 MonitorConfig c=new MonitorConfig(o.getString("event"),o.getString("city"),o.getString("date"),o.getString("time"),
                         values,o.getInt("quantity"),o.getInt("maxTotal"),Instant.parse(o.getString("deadline")),
                         o.getLong("min"),o.getLong("max"),MonitorConfig.Mode.valueOf(o.getString("mode")),
-                        o.isNull("saleAt")?null:Instant.parse(o.getString("saleAt")),o.getInt("follow"));
+                        o.isNull("saleAt")?null:Instant.parse(o.getString("saleAt")),o.getInt("follow")).withOpeningPrice(o.optInt("openingPrice",0));
                 if(!valid(c) || result.stream().anyMatch(old->key(old).equals(key(c))))throw new IllegalArgumentException();
                 result.add(draft(c));
             }
@@ -56,7 +56,7 @@ public final class SavedPlans {
                 result.put(new JSONObject().put("event",c.eventKeyword).put("city",c.city).put("date",c.date).put("time",c.time)
                         .put("prices",new JSONArray(c.prices)).put("quantity",c.quantity).put("maxTotal",c.maxTotal)
                         .put("deadline",c.deadline.toString()).put("min",c.minIntervalMs).put("max",c.maxIntervalMs)
-                        .put("mode",c.mode.name()).put("saleAt",c.saleAt==null?JSONObject.NULL:c.saleAt.toString()).put("follow",c.followUpMinutes));
+                        .put("mode",c.mode.name()).put("saleAt",c.saleAt==null?JSONObject.NULL:c.saleAt.toString()).put("follow",c.followUpMinutes).put("openingPrice",c.openingPrice));
             }
             return result.toString();
         } catch(Exception invalid){throw new IllegalArgumentException("场次保存失败",invalid);}

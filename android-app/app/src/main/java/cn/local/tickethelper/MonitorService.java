@@ -402,7 +402,7 @@ public final class MonitorService extends AccessibilityService {
         SaleTiming.Tick initialTiming = preparedTiming.tick(System.currentTimeMillis(), SystemClock.elapsedRealtime());
         if (initialTiming.phase == SaleTiming.Phase.STOPPED) { pause(initialTiming.statusText()); return; }
         if (ocr.isBusy()) { ocr.close(); ocr = new OcrReader(this); }
-        generation++; engine.reset(); engine.allowInitialDetailNavigation(config); busy = false; running = true; targetSeen = false;
+        generation++; engine.reset(); engine.beginOpeningStrategy(config,System.currentTimeMillis()); engine.allowInitialDetailNavigation(config); busy = false; running = true; targetSeen = false;
         startedAt = SystemClock.elapsedRealtime(); lastNavigationAt = 0; nextActionAt = 0; lastSessionCompletedElapsed = 0;
         saleTiming = preparedTiming; salePhase = null; reservationExitAttempted = false;
         openingWakePending = initialTiming.phase == SaleTiming.Phase.WAITING_FOR_SALE;
@@ -904,6 +904,10 @@ public final class MonitorService extends AccessibilityService {
         AiContextRepository.recordDecision(decision);
         store.appendObservation(decision.state.name(), decision.reason, SystemClock.elapsedRealtime() - began,
                 nodeCount, ocrCount, usedOcr);
+        if(transitionAction==Decision.Action.NONE && engine.expandAfterOpeningShortage(config,decision)) {
+            busy=false;store.appendEvent("OPENING_FALLBACK","primary_tier_shortage_fallback_enabled",0);
+            status("首抢票档已确认缺票，继续核查接受的其他票档。");schedule(1);return;
+        }
         if (transitionAction == Decision.Action.INCREASE_QUANTITY) {
             if (decision.state == Decision.State.CHECKOUT) {
                 stop("数量调整后进入了其他页面，尚未确认两张，已暂停。", "UNKNOWN", "quantity_transition_page_changed", true); return;

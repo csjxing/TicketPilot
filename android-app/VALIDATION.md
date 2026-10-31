@@ -1,5 +1,13 @@
 # Android 构建与真机验收
 
+## 2026-10-31 v0.3.10-preview / code37: primary opening tier with shortage fallback
+
+User specified Sun Yanzi Guangzhou November 27 and December 4 as the sessions to save: primary opening tier 1680, with 1680/1380 monitored after the primary is explicitly unavailable. Quantity two and 3360 maximum are test-draft defaults, not a newly confirmed purchase authorization. No Guangzhou order is authorized yet.
+
+Added per-session openingPrice, a preference to reserve the highest accepted tier for the initial opening attempt, and persistent storage alongside saved sessions. Ordinary edits preserve this policy only for the identical session. Opening-only selection applies to a run started before or during the existing opening burst. A later ordinary monitoring run checks all accepted tiers with the opening tier first. Only a fresh, accepted OUT_OF_STOCK observation with the known explicit-tier/session shortage reason releases fallback; unknown, errors, page changes and elapsed time do not. The service then rereads the current page without adding a return/navigation cooldown. Existing quantity, total, page and order gates remain. This does not register a production checkout adapter or prove opening/order latency.
+
+Code36 installed APK was read back and matched the frozen artifact. The actual saved-session list retained the Changsha plan. Page-reading permission was initially off, then enabled by the user; live helper readiness showed both accessibility and previously authorized Shizuku input connected. Two Guangzhou saves, switching, code37 installation and publication are pending.
+
 ## 2026-10-31 v0.3.9-preview / code36: multiple saved sessions
 
 The plan home now links to 我的场次, with a list of saved performance sessions, an add-from-Damai action, current-session indicator, explicit switch and deletion of inactive sessions. Normal saves archive the existing valid plan and update only the same event/city/date/time entry. Each session retains its own public prices, quantity, maximum total, deadline, refresh interval and opening/follow-up schedule. Existing single-plan data is preserved without clearing app storage. The library is local, bounded to 50 entries and rejects corrupted data rather than silently overwriting it.

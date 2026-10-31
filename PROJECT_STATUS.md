@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-31 v0.3.10-preview / code37: primary opening tier with shortage fallback
+
+User specified Sun Yanzi Guangzhou November 27 and December 4 as the sessions to save: primary opening tier 1680, with 1680/1380 monitored after the primary is explicitly unavailable. Quantity two and 3360 maximum are test-draft defaults, not a newly confirmed purchase authorization. No Guangzhou order is authorized yet.
+
+Added per-session openingPrice, a preference to reserve the highest accepted tier for the initial opening attempt, and persistent storage alongside saved sessions. Ordinary edits preserve this policy only for the identical session. Opening-only selection applies to a run started before or during the existing opening burst. A later ordinary monitoring run checks all accepted tiers with the opening tier first. Only a fresh, accepted OUT_OF_STOCK observation with the known explicit-tier/session shortage reason releases fallback; unknown, errors, page changes and elapsed time do not. The service then rereads the current page without adding a return/navigation cooldown. Existing quantity, total, page and order gates remain. This does not register a production checkout adapter or prove opening/order latency.
+
+Code36 installed APK was read back and matched the frozen artifact. The actual saved-session list retained the Changsha plan. Page-reading permission was initially off, then enabled by the user; live helper readiness showed both accessibility and previously authorized Shizuku input connected. Two Guangzhou saves, switching, code37 installation and publication are pending.
+
 ## code36 delivery checkpoint
 
 Source commit b016e3f is pushed to main. The frozen same-signature code36 APK, Android source ZIP and manifest are prepared under exports/release-v0.3.9-preview. Wireless installation reached the real vivo security confirmation, showing v0.3.9-preview; phone system confirmation is pending and installed package is still code35. User was asked to complete the installer prompt. No monitor, reservation submission, order or payment was started.

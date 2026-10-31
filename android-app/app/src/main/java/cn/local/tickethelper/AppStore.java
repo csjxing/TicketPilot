@@ -77,7 +77,7 @@ public final class AppStore {
                 prefs.getString("date", ""), prefs.getString("time", ""), prices,
                 prefs.getInt("quantity", 1), prefs.getInt("maxTotal", 0), deadline,
                 prefs.getLong("minIntervalMs", 5000L), prefs.getLong("maxIntervalMs", 10000L), mode,
-                saleAt, prefs.getInt("timing_follow_up_minutes", 0));
+                saleAt, prefs.getInt("timing_follow_up_minutes", 0)).withOpeningPrice(prefs.getInt("opening_price",0));
     }
 
     public void saveConfig(MonitorConfig config) {
@@ -100,7 +100,7 @@ public final class AppStore {
                 .putString("deadline", config.deadline == null ? "" : config.deadline.toString())
                 .putLong("minIntervalMs", config.minIntervalMs).putLong("maxIntervalMs", config.maxIntervalMs)
                 .putString("timing_sale_at", config.saleAt == null ? "" : config.saleAt.toString())
-                .putInt("timing_follow_up_minutes", config.followUpMinutes)
+                .putInt("timing_follow_up_minutes", config.followUpMinutes).putInt("opening_price",config.openingPrice)
                 .putString("mode", config.mode.name()).putBoolean("armed", false)
                 .putLong("config_revision", prefs.getLong("config_revision", 0) + 1);
     }
@@ -114,7 +114,7 @@ public final class AppStore {
             MonitorConfig changed = new MonitorConfig(old.eventKeyword,old.city,old.date,old.time,
                     old.prices,old.quantity,old.maxTotal,old.deadline,
                     useFastRhythm?500:old.minIntervalMs,useFastRhythm?1500:old.maxIntervalMs,
-                    old.mode,saleAt,followUpMinutes);
+                    old.mode,saleAt,followUpMinutes).withOpeningPrice(old.openingPrice);
             List<String> errors = changed.validate();
             if (!errors.isEmpty()) throw new IllegalArgumentException(String.join("\n",errors));
             saveResolvedConfig(changed); return changed;
@@ -167,7 +167,7 @@ public final class AppStore {
                     .putString("prices", prices.toString()).putInt("quantity", 1).putInt("maxTotal", config.maxTotal)
                     .putString("deadline", config.deadline == null ? "" : config.deadline.toString())
                     .putLong("minIntervalMs", config.minIntervalMs).putLong("maxIntervalMs", config.maxIntervalMs)
-                    .remove("timing_sale_at").remove("timing_follow_up_minutes")
+                    .remove("timing_sale_at").remove("timing_follow_up_minutes").remove("opening_price")
                     .putString("mode", config.mode.name()).putBoolean("armed", false)
                     .putBoolean("imported_target_pending_review", true)
                     .putString("viewer_display_name", "").putString("viewer_document_suffix", "")
@@ -205,7 +205,7 @@ public final class AppStore {
                     .putString("prices", prices.toString()).putInt("quantity", config.quantity)
                     .putInt("maxTotal", config.maxTotal).putString("deadline", config.deadline.toString())
                     .putLong("minIntervalMs", config.minIntervalMs).putLong("maxIntervalMs", config.maxIntervalMs)
-                    .remove("timing_sale_at").remove("timing_follow_up_minutes")
+                    .remove("timing_sale_at").remove("timing_follow_up_minutes").remove("opening_price")
                     .putString("mode", config.mode.name()).putBoolean("armed", false)
                     .putString("viewer_display_name", "").putString("viewer_document_suffix", "")
                     .remove("viewer_bindings_json")

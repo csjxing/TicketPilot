@@ -33,6 +33,13 @@ public final class DecisionEngine {
     private int detailScrollUnsentRetries;
     private long detailScrollReobserveAfterMs;
 
+    private final OpeningPriceStrategy openingPrices=new OpeningPriceStrategy();
+    public synchronized void beginOpeningStrategy(MonitorConfig config,long now){openingPrices.begin(config,now);}
+    /** The service calls this only after its fresh, complete observation passes validation. */
+    public synchronized boolean expandAfterOpeningShortage(MonitorConfig config,Decision decision){
+        return decision==lastDecision && openingPrices.shortage(config,decision);
+    }
+
     public DecisionEngine() { this(Clock.systemUTC()); }
     public DecisionEngine(Clock clock) { this.clock = clock == null ? Clock.systemUTC() : clock; }
 
@@ -169,6 +176,7 @@ public final class DecisionEngine {
                 || !c.date.equals(verified.date) || !c.time.equals(verified.time)))
             return result(Decision.State.UNKNOWN, "adapter_session_evidence_mismatch");
         String fingerprint = fingerprint(c);
+        List<Integer> wantedPrices=openingPrices.prices(c);
         if (!fingerprint.equals(returnFingerprint) || currentMs > returnUntilMs) clearReturnContext();
         boolean titleMatches = titleMatches(c, o.items);
         boolean dateMatches = hasDate(c, all, o.timestampMs);
@@ -176,7 +184,7 @@ public final class DecisionEngine {
         boolean scopeVisible = titleMatches && dateMatches && timeMatches;
         List<Candidate> allCandidates = candidates(o.items);
         List<Candidate> candidates = new ArrayList<>();
-        for (Candidate candidate : allCandidates) if (c.prices.contains(candidate.price)) candidates.add(candidate);
+        for (Candidate candidate : allCandidates) if (wantedPrices.contains(candidate.price)) candidates.add(candidate);
         boolean sku = uniqueRegion(o.items, "project_detail_perform_flowlayout") != null || contains(all, "票档", "选择票价", "选择票档") ||
                 (!candidates.isEmpty() && contains(all, "购买数量", "数量") && exactButton(o.items, "确定") != null);
         if (!sku) { contextFingerprint = ""; contextUntilMs = 0; }
@@ -271,7 +279,7 @@ public final class DecisionEngine {
         // A selected node alone is not stock evidence. It must coexist with an enabled confirm,
         // a visible quantity and an exact total, and must have no negative label in its own region.
         Candidate selected = uniqueSelected(allCandidates);
-        if (selected != null && c.prices.contains(selected.price) && !selected.negative && selected.item.enabled) {
+        if (selected != null && wantedPrices.contains(selected.price) && !selected.negative && selected.item.enabled) {
             UiItem confirm = exactButton(o.items, "确定");
             if (confirm != null && confirm.source == UiItem.Source.NODE && confirm.clickable
                     && quantityVerified(c, all) && totalVerified(c, selected.price, all)) {
@@ -280,7 +288,7 @@ public final class DecisionEngine {
                 return result(Decision.State.IN_STOCK, "selected_price_quantity_total_verified");
             }
         }
-        for (int price : c.prices) {
+        for (int price : wantedPrices) {
             List<Candidate> matching = byPrice(candidates, price);
             if (matching.size() == 1) {
                 Candidate candidate = matching.get(0);
@@ -295,7 +303,7 @@ public final class DecisionEngine {
         // It is allowed only after the adapter positively verified this frame's selected session.
         if (verified != null && c.canPreparePurchase() && verified.selectedPrice == null
                 && uniqueRegion(o.items, "project_detail_perform_price_flowlayout") != null) {
-            for (int price : c.prices) {
+            for (int price : wantedPrices) {
                 List<Candidate> matching = byPrice(candidates, price);
                 if (matching.size() == 1) {
                     Candidate candidate = matching.get(0);
@@ -305,7 +313,7 @@ public final class DecisionEngine {
             }
         }
         boolean allUnavailable = true;
-        for (int price : c.prices) {
+        for (int price : wantedPrices) {
             List<Candidate> matching = byPrice(candidates, price);
             if (matching.isEmpty() || matching.stream().anyMatch(x -> !x.negative)) allUnavailable = false;
         }

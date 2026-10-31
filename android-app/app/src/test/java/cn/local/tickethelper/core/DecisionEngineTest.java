@@ -31,6 +31,17 @@ public class DecisionEngineTest {
         Decision d=eval(sku(tier("1680元",500,false),tier("1380元",700,false),tier("980元",900,false)));
         assertEquals(Decision.State.UNKNOWN,d.state); assertEquals(Decision.Action.NONE,d.action);
     }
+    @Test public void openingDoesNotSelectFallbackBeforeVerifiedPrimaryShortage() {
+        MonitorConfig c=config(MonitorConfig.Mode.PREPARE).withTiming(Instant.ofEpochMilli(now),30).withOpeningPrice(1680);
+        DecisionEngine engine=engine();engine.beginOpeningStrategy(c,now-1000);
+        Observation page=obs(sku(tier("1680元 缺货",500,false),tier("1380元 有票",700,false),tier("980元 缺货",900,false)));
+        Decision first=engine.evaluate(c,page,0);
+        assertEquals(Decision.State.OUT_OF_STOCK,first.state);
+        assertFalse(engine.expandAfterOpeningShortage(c,new Decision(first.state,first.action,first.target,first.reason)));
+        assertTrue(engine.expandAfterOpeningShortage(c,first));
+        Decision next=engine.evaluate(c,page,0);
+        assertEquals(Decision.Action.SELECT_TIER,next.action);assertEquals("1380元 有票",next.target.text);
+    }
     @Test public void allVisibleUnavailableAllowsOneReturn() {
         Decision d=eval(sku(tier("1680元 缺货登记",500,false),tier("1380元 售罄",700,false),tier("980元 无票",900,false)));
         assertEquals(Decision.State.OUT_OF_STOCK,d.state); assertEquals(Decision.Action.BACK,d.action);

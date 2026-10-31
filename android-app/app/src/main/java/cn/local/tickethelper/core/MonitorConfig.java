@@ -26,12 +26,14 @@ public final class MonitorConfig {
     public final Instant saleAt;
     public final int followUpMinutes;
     public final boolean timingSpecified;
+    public final int openingPrice;
+    private final boolean openingPriceSpecified;
 
     public MonitorConfig(String eventKeyword, String city, String date, String time,
                          List<Integer> prices, int quantity, int maxTotal, Instant deadline,
                          long minIntervalMs, long maxIntervalMs, Mode mode) {
         this(eventKeyword, city, date, time, prices, quantity, maxTotal, deadline,
-                minIntervalMs, maxIntervalMs, mode, null, 0, false);
+                minIntervalMs, maxIntervalMs, mode, null, 0, false, 0, false);
     }
 
     public MonitorConfig(String eventKeyword, String city, String date, String time,
@@ -39,13 +41,13 @@ public final class MonitorConfig {
                          long minIntervalMs, long maxIntervalMs, Mode mode, Instant saleAt,
                          int followUpMinutes) {
         this(eventKeyword, city, date, time, prices, quantity, maxTotal, deadline,
-                minIntervalMs, maxIntervalMs, mode, saleAt, followUpMinutes, true);
+                minIntervalMs, maxIntervalMs, mode, saleAt, followUpMinutes, true, 0, false);
     }
 
     private MonitorConfig(String eventKeyword, String city, String date, String time,
                           List<Integer> prices, int quantity, int maxTotal, Instant deadline,
                           long minIntervalMs, long maxIntervalMs, Mode mode, Instant saleAt,
-                          int followUpMinutes, boolean timingSpecified) {
+                          int followUpMinutes, boolean timingSpecified, int openingPrice, boolean openingPriceSpecified) {
         this.eventKeyword = clean(eventKeyword);
         this.city = clean(city);
         this.date = clean(date);
@@ -60,6 +62,7 @@ public final class MonitorConfig {
         this.saleAt = saleAt;
         this.followUpMinutes = followUpMinutes;
         this.timingSpecified = timingSpecified;
+        this.openingPrice=openingPrice;this.openingPriceSpecified=openingPriceSpecified;
     }
 
     private static String clean(String s) { return s == null ? "" : s.trim(); }
@@ -69,14 +72,20 @@ public final class MonitorConfig {
 
     public MonitorConfig withTiming(Instant saleAt, int followUpMinutes) {
         return new MonitorConfig(eventKeyword, city, date, time, prices, quantity, maxTotal,
-                deadline, minIntervalMs, maxIntervalMs, mode, saleAt, followUpMinutes);
+                deadline, minIntervalMs, maxIntervalMs, mode, saleAt, followUpMinutes, true, openingPrice, openingPriceSpecified);
     }
 
     /** Older screens omit new schedule fields; retain them only for the identical event/session. */
+    public MonitorConfig withOpeningPrice(int price) {
+        return new MonitorConfig(eventKeyword,city,date,time,prices,quantity,maxTotal,deadline,minIntervalMs,maxIntervalMs,
+                mode,saleAt,followUpMinutes,timingSpecified,price,true);
+    }
     public MonitorConfig resolveLegacyTiming(MonitorConfig previous) {
-        if (timingSpecified || previous==null || !eventKeyword.equals(previous.eventKeyword)
-                || !city.equals(previous.city) || !date.equals(previous.date) || !time.equals(previous.time)) return this;
-        return withTiming(previous.saleAt,previous.followUpMinutes);
+        if(previous==null || !eventKeyword.equals(previous.eventKeyword) || !city.equals(previous.city)
+                || !date.equals(previous.date) || !time.equals(previous.time))return this;
+        MonitorConfig result=timingSpecified?this:withTiming(previous.saleAt,previous.followUpMinutes);
+        if(!openingPriceSpecified)result=result.withOpeningPrice(prices.contains(previous.openingPrice)?previous.openingPrice:0);
+        return result;
     }
 
     /** All current events are in China; never interpret a phone's travel time zone as the venue. */
@@ -109,6 +118,7 @@ public final class MonitorConfig {
         else try { deadline.toEpochMilli(); } catch (ArithmeticException e) { errors.add("停止时间超出有效范围"); }
         if (minIntervalMs < MIN_INTERVAL_MS || maxIntervalMs < minIntervalMs || maxIntervalMs > MAX_INTERVAL_MS)
             errors.add("操作间隔须介于 0.5 秒与 10 分钟，最大值不能小于最小值");
+        if (openingPrice<0 || (openingPrice>0 && !prices.contains(openingPrice))) errors.add("首抢票价须在接受票价中");
         if (mode == null) errors.add("请选择提醒、准备或锁单模式");
         if (followUpMinutes < 0 || followUpMinutes > MAX_FOLLOW_UP_MINUTES)
             errors.add("持续监控时长应为 0 至 1440 分钟，0 表示沿用停止时间");

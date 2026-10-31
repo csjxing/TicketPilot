@@ -61,7 +61,7 @@ public final class MainActivity extends Activity {
     private MonitorConfig preferenceBase;
     private MonitorConfig.Mode preferredMode;
     private long preferenceRevision;
-    private boolean active, customPace, refreshReviewAfterViewers;
+    private boolean active, customPace, refreshReviewAfterViewers, preferredOpening;
     private long preferredMin, preferredMax;
     private String draftMin, draftMax;
     private StartReview pageReview;
@@ -126,7 +126,7 @@ public final class MainActivity extends Activity {
     }
 
     private void beginPreferences() {
-        preferenceBase = store.loadConfig(); preferenceRevision = store.getConfigRevision();
+        preferenceBase = store.loadConfig();preferredOpening=preferenceBase.openingPrice>0; preferenceRevision = store.getConfigRevision();
         preferredMode = preferenceBase.mode; preferredMin = preferenceBase.minIntervalMs; preferredMax = preferenceBase.maxIntervalMs;
         draftMin = null; draftMax = null;
         customPace = !((preferredMin == 500 && preferredMax == 1500) || (preferredMin == 1000 && preferredMax == 3000) || (preferredMin == 5000 && preferredMax == 10000));
@@ -193,6 +193,7 @@ public final class MainActivity extends Activity {
                     .format(java.time.format.DateTimeFormatter.ofPattern("MM月dd日 HH:mm 开售")));
             summaryRow("持续跟进", c.followUpMinutes == 0 ? "直到计划截止" : c.followUpMinutes + " 分钟");
             summaryRow("实付上限", "¥" + c.maxTotal + " · " + c.quantity + " 张");
+            if(c.openingPrice>0)summaryRow("票价策略","首抢¥"+c.openingPrice+"，缺票后加入其他接受票价");
             add(body,"有票后的连续步骤不等整轮间隔；实际耗时取决于读取与大麦加载。",12,MUTED,false,7);
             body.addView(textAction("设置开售等待与回流票跟进  ›", () -> startActivity(new Intent(this,TimingActivity.class))),space(10));
         }
@@ -213,6 +214,7 @@ public final class MainActivity extends Activity {
                 add(card,c.city+(current?" · 当前场次":""),13,current?BLUE:MUTED,true,0);
                 add(card,c.eventKeyword,19,INK,true,8);add(card,displayDate(c)+"  "+c.time,15,MUTED,false,8);
                 add(card,priceText(c)+" · "+c.quantity+"张 · 上限¥"+c.maxTotal,15,INK,false,8);
+                if(c.openingPrice>0)add(card,"首抢¥"+c.openingPrice+"，缺票后候补其他票价",13,BLUE,false,8);
                 if(c.saleAt!=null)add(card,"开售 "+c.saleAt.atZone(java.time.ZoneId.of("Asia/Shanghai")).format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm:ss")),13,MUTED,false,8);
                 if(!current) {
                     card.addView(button("使用这个场次",true,v->{
@@ -254,6 +256,11 @@ public final class MainActivity extends Activity {
         choice(lockAvailable?"发现票后下单，停在待付款":"自动下单 · 当前版本尚未适配",
                 lockAvailable?"核实票档、张数、观演人和金额后提交一次；付款由我完成。":"确认购买页和待付款页须通过当前大麦版本的真实适配后才能使用。",
                 preferredMode==MonitorConfig.Mode.LOCK_ORDER,lockAvailable,() -> {readCustomPace();preferredMode=MonitorConfig.Mode.LOCK_ORDER;render();});
+        int primaryPrice=preferenceBase.prices.stream().max(Integer::compareTo).orElse(0);
+        add(body,"首抢与回流票",20,INK,true,24);
+        choice("首抢只选¥"+primaryPrice,"开售前启动后，只尝试这个票档。明确缺票后加入其余接受票价；两档都有时优先首抢票价。",
+                preferredOpening,preferenceBase.prices.size()>1,()->{readCustomPace();preferredOpening=!preferredOpening;render();});
+        add(body,"先在开售与回流票设置中读取开售时间。已开售后的普通监控按接受票价持续核查。",12,MUTED,false,8);
         add(body,"随机刷新节奏",20,INK,true,28);
         LinearLayout speeds=row();
         paceChip(speeds,"快速","0.5–1.5秒",500,1500);paceChip(speeds,"常用","1–3秒",1000,3000);paceChip(speeds,"稳健","5–10秒",5000,10000);
@@ -350,7 +357,8 @@ public final class MainActivity extends Activity {
             long min=customPace&&minimum!=null?IntervalSeconds.parse(minimum.getText().toString()):preferredMin;
             long max=customPace&&maximum!=null?IntervalSeconds.parse(maximum.getText().toString()):preferredMax;
             if(preferredMode==MonitorConfig.Mode.LOCK_ORDER&&!orderAdapterAvailable()){preferenceError.setText("当前大麦版本的真实订单适配尚未就绪，请选择提醒或帮我选票。");return;}
-            MonitorConfig changed=TaskPreferences.withMode(TaskPreferences.withPace(preferenceBase,min,max),preferredMode);
+            MonitorConfig changed=TaskPreferences.withMode(TaskPreferences.withPace(preferenceBase,min,max),preferredMode)
+                    .withOpeningPrice(preferredOpening?preferenceBase.prices.stream().max(Integer::compareTo).orElse(0):0);
             pause("已保存购票条件，尚未开始。");store.saveConfig(changed);navigate("plan");toast("条件已保存");
         }catch(IllegalArgumentException e){preferenceError.setText("间隔应为0.5–600秒，最长值不能小于最短值。");}
     }
