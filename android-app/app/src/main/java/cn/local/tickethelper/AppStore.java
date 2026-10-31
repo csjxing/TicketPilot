@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import cn.local.tickethelper.core.MonitorConfig;
 import cn.local.tickethelper.core.MonitorStopState;
+import cn.local.tickethelper.plans.SavedPlans;
 import cn.local.tickethelper.checkout.ViewerMatcher;
 import cn.local.tickethelper.checkout.LockAuthorization;
 import org.json.JSONArray;
@@ -86,9 +87,13 @@ public final class AppStore {
     }
 
     private void saveResolvedConfig(MonitorConfig config) {
+        synchronized (LOCK) { configEditor(config).apply(); }
+    }
+    private SharedPreferences.Editor configEditor(MonitorConfig config) {
         JSONArray prices = new JSONArray();
         for (Integer price : config.prices) prices.put(price);
-        synchronized (LOCK) { prefs.edit().putString("event", config.eventKeyword).putString("city", config.city)
+        return prefs.edit().putString("saved_plans_json", SavedPlans.write(SavedPlans.put(savedPlans(),config)))
+                .putString("event", config.eventKeyword).putString("city", config.city)
                 .putString("date", config.date).putString("time", config.time)
                 .putString("prices", prices.toString()).putInt("quantity", config.quantity)
                 .putInt("maxTotal", config.maxTotal)
@@ -97,7 +102,7 @@ public final class AppStore {
                 .putString("timing_sale_at", config.saleAt == null ? "" : config.saleAt.toString())
                 .putInt("timing_follow_up_minutes", config.followUpMinutes)
                 .putString("mode", config.mode.name()).putBoolean("armed", false)
-                .putLong("config_revision", prefs.getLong("config_revision", 0) + 1).apply(); }
+                .putLong("config_revision", prefs.getLong("config_revision", 0) + 1);
     }
 
     /** Explicit local edit only. Callers pause the service before saving; nothing auto-starts. */
@@ -117,6 +122,33 @@ public final class AppStore {
     }
 
     public long getConfigRevision() { return prefs.getLong("config_revision", 0); }
+    /** Current pre-upgrade plan is included lazily and archived with the next config transaction. */
+    public List<MonitorConfig> savedPlans() {
+        synchronized (LOCK) {return SavedPlans.put(SavedPlans.read(prefs.getString("saved_plans_json","[]")),loadConfig());}
+    }
+    public void activateSavedPlan(String key,long expectedRevision) {
+        synchronized (LOCK) {
+            if(getConfigRevision()!=expectedRevision)throw new IllegalArgumentException("计划已变化，请刷新后再切换。");
+            MonitorConfig selected=null;
+            for(MonitorConfig c:savedPlans())if(SavedPlans.key(c).equals(key))selected=c;
+            if(selected==null)throw new IllegalArgumentException("该场次已不存在，请刷新。");
+            // A library item is a draft, never a stored purchase grant or attendee binding.
+            if(!configEditor(SavedPlans.draft(selected)).putBoolean("imported_target_pending_review",true)
+                    .remove("viewer_display_name").remove("viewer_document_suffix").remove("viewer_bindings_json").commit())
+                throw new IllegalArgumentException("未能切换场次，请重试。");
+            catalogDisplay.edit().clear().apply();
+            CatalogStore.update("IDLE","已切换场次，请从大麦核对后开始。",selected.eventKeyword,
+                    null,null,List.of(),List.of(),List.of(),0);
+        }
+    }
+    public void deleteSavedPlan(String key,long expectedRevision) {
+        synchronized (LOCK) {
+            if(getConfigRevision()!=expectedRevision)throw new IllegalArgumentException("计划已变化，请刷新后再删除。");
+            if(SavedPlans.key(loadConfig()).equals(key))throw new IllegalArgumentException("当前场次请先切换后再删除。");
+            List<MonitorConfig> plans=new ArrayList<>(savedPlans());plans.removeIf(c->SavedPlans.key(c).equals(key));
+            if(!prefs.edit().putString("saved_plans_json",SavedPlans.write(plans)).commit())throw new IllegalArgumentException("未能保存，请重试。");
+        }
+    }
     /** Explicitly accepted AI draft; incomplete targets are allowed but can never start until re-read. */
     public boolean saveAiDraft(MonitorConfig config) {
         if (config == null || config.quantity != 1 || config.mode == MonitorConfig.Mode.LOCK_ORDER
@@ -129,7 +161,8 @@ public final class AppStore {
             prices.put(price);
         }
         synchronized (LOCK) {
-            boolean saved = prefs.edit().putString("event", config.eventKeyword).putString("city", config.city)
+            boolean saved = prefs.edit().putString("saved_plans_json",SavedPlans.write(savedPlans()))
+                    .putString("event", config.eventKeyword).putString("city", config.city)
                     .putString("date", config.date).putString("time", config.time)
                     .putString("prices", prices.toString()).putInt("quantity", 1).putInt("maxTotal", config.maxTotal)
                     .putString("deadline", config.deadline == null ? "" : config.deadline.toString())
@@ -166,7 +199,8 @@ public final class AppStore {
             throw new IllegalArgumentException("Invalid imported public draft");
         JSONArray prices = new JSONArray(); for (Integer price : config.prices) prices.put(price);
         synchronized (LOCK) {
-            boolean saved = prefs.edit().putString("event", config.eventKeyword).putString("city", config.city)
+            boolean saved = prefs.edit().putString("saved_plans_json",SavedPlans.write(savedPlans()))
+                    .putString("event", config.eventKeyword).putString("city", config.city)
                     .putString("date", config.date).putString("time", config.time)
                     .putString("prices", prices.toString()).putInt("quantity", config.quantity)
                     .putInt("maxTotal", config.maxTotal).putString("deadline", config.deadline.toString())

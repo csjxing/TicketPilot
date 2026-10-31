@@ -1,5 +1,13 @@
 # Android 构建与真机验收
 
+## 2026-10-31 v0.3.9-preview / code36: multiple saved sessions
+
+The plan home now links to 我的场次, with a list of saved performance sessions, an add-from-Damai action, current-session indicator, explicit switch and deletion of inactive sessions. Normal saves archive the existing valid plan and update only the same event/city/date/time entry. Each session retains its own public prices, quantity, maximum total, deadline, refresh interval and opening/follow-up schedule. Existing single-plan data is preserved without clearing app storage. The library is local, bounded to 50 entries and rejects corrupted data rather than silently overwriting it.
+
+Switching pauses monitoring, atomically applies an explicit timing draft with a new revision, clears old local attendee bindings, and requires fresh Damai review before starting. LOCK_ORDER authority is never restored from a saved session; the order journal, encrypted model settings and usage are untouched. This feature does not run multiple monitors concurrently. Saved sessions are not yet included in portable backup/export.
+
+Current live phone reconnected after its wireless port changed; the model was checked against the paired record and no private endpoint was printed. First candidate checks: 772 unit tests passed, Lint and APK build passed. Installation, Guangzhou capture, multi-session switching and publication are tracked separately and remain pending. Guangzhou is a flow-only test; no purchase target or order was authorized for it.
+
 ## 2026-10-30 v0.3.8-preview / code35: read opening time from Damai
 
 Timing settings now lead with “从大麦读取开售时间”. Manual date/time controls are collapsed as a fallback. This explicit local read stays paused, waits at most two minutes while the user navigates to the target session, and can be cancelled. Native labels are tried first, then bundled local OCR with foreground/window-boundary checks. Only a timestamp and fixed status remain; no page content or screenshot is persisted or sent to a model. A captured draft must match the current plan revision, remain fresh, and be confirmed before it is filled into the settings; saving still does not start monitoring.

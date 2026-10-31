@@ -114,7 +114,7 @@ public final class MainActivity extends Activity {
     }
 
     private String route(String value) {
-        return List.of("plan", "setup", "preferences", "account", "help", "review", "recovery").contains(value == null ? "" : value) ? value : "plan";
+        return List.of("plan", "saved", "setup", "preferences", "account", "help", "review", "recovery").contains(value == null ? "" : value) ? value : "plan";
     }
 
     private void navigate(String next) {
@@ -153,6 +153,7 @@ public final class MainActivity extends Activity {
         else if ("account".equals(route)) renderAccount();
         else if ("help".equals(route)) renderHelp();
         else if ("recovery".equals(route)) renderRecovery();
+        else if ("saved".equals(route)) renderSavedPlans();
         else renderPlan();
         navItem("计划", "plan", () -> navigate("plan"));
         navItem("领航员", "navigator", () -> openNavigator());
@@ -164,6 +165,7 @@ public final class MainActivity extends Activity {
         MonitorConfig c = store.loadConfig(); PilotJourney.Result journey = journey(c);
         LinearLayout brand = row(); brand.addView(text("TicketPilot", 21, INK, true), weighted());
         brand.addView(tag("手机本地运行", MUTED, BG)); body.addView(brand);
+        body.addView(textAction("我的场次 · 保存与切换  ›", () -> {pause("正在管理已保存场次，监控暂停。");navigate("saved");}),space(16));
         boolean hasTarget = !c.eventKeyword.isEmpty();
         if (!hasTarget) {
             add(body, "先在大麦选一场", 34, INK, true, 28);
@@ -195,6 +197,36 @@ public final class MainActivity extends Activity {
             body.addView(textAction("设置开售等待与回流票跟进  ›", () -> startActivity(new Intent(this,TimingActivity.class))),space(10));
         }
         actionFooter(journey.button, journey.outcome, () -> perform(journey.action));
+    }
+
+    private void renderSavedPlans() {
+        header("我的场次","每个场次分别保存，选择一场作为当前计划。",()->navigate("plan"));
+        body.addView(button("去大麦添加场次",true,v->openCatalog()),space(20));
+        try {
+            List<MonitorConfig> plans=store.savedPlans();
+            if(plans.isEmpty())add(body,"还没有保存场次，先从大麦读取一场。",16,MUTED,false,20);
+            String activeKey=cn.local.tickethelper.plans.SavedPlans.key(store.loadConfig());
+            long revision=store.getConfigRevision();
+            for(MonitorConfig c:plans) {
+                String key=cn.local.tickethelper.plans.SavedPlans.key(c);boolean current=key.equals(activeKey);
+                LinearLayout card=column();card.setPadding(dp(18),dp(18),dp(18),dp(18));card.setBackground(shape(Color.WHITE,current?BLUE:LINE,18));
+                add(card,c.city+(current?" · 当前场次":""),13,current?BLUE:MUTED,true,0);
+                add(card,c.eventKeyword,19,INK,true,8);add(card,displayDate(c)+"  "+c.time,15,MUTED,false,8);
+                add(card,priceText(c)+" · "+c.quantity+"张 · 上限¥"+c.maxTotal,15,INK,false,8);
+                if(c.saleAt!=null)add(card,"开售 "+c.saleAt.atZone(java.time.ZoneId.of("Asia/Shanghai")).format(java.time.format.DateTimeFormatter.ofPattern("MM-dd HH:mm:ss")),13,MUTED,false,8);
+                if(!current) {
+                    card.addView(button("使用这个场次",true,v->{
+                        try {pause("正在切换场次，监控暂停。");store.activateSavedPlan(key,revision);store.setStatus("已切换场次，请到大麦核对后开始。");navigate("plan");toast("已切换，尚未开始");}
+                        catch(IllegalArgumentException invalid){message("暂时无法切换",invalid.getMessage());render();}
+                    }),space(12));
+                    card.addView(textAction("删除",()->new AlertDialog.Builder(this).setTitle("删除已保存场次？")
+                            .setMessage(c.city+" · "+c.date+" "+c.time).setNegativeButton("保留",null)
+                            .setPositiveButton("删除",(d,w)->{try{store.deleteSavedPlan(key,revision);render();}catch(IllegalArgumentException invalid){message("未删除",invalid.getMessage());}}).show()),space(8));
+                }
+                body.addView(card,space(16));
+            }
+        } catch(IllegalArgumentException invalid){add(body,invalid.getMessage(),15,MUTED,false,20);}
+        footer.setVisibility(View.GONE);
     }
 
     private void renderTicket(MonitorConfig c) {
