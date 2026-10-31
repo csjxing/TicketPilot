@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## code36 delivery checkpoint
+
+Source commit b016e3f is pushed to main. The frozen same-signature code36 APK, Android source ZIP and manifest are prepared under exports/release-v0.3.9-preview. Wireless installation reached the real vivo security confirmation, showing v0.3.9-preview; phone system confirmation is pending and installed package is still code35. User was asked to complete the installer prompt. No monitor, reservation submission, order or payment was started.
+
+Normal Damai UI navigation found Sun Yanzi Guangzhou. The visible detail page lists four sessions spanning November 27/29 and December 4/6, and displays November 3 at 14:00 as opening. This is a current public UI observation, not successful assistant parsing, saved-plan or countdown verification. Guangzhou remains a flow-only test.
+
+The independent GitHub release tab timed out on navigation and subsequent binding returned Debugger unattached. No release form, asset upload or publish action occurred; no new public download URL is verified. File relay was not used. Phone installation, multi-session device tests and publication remain incomplete.
+
 ## 2026-10-31 v0.3.9-preview / code36: multiple saved sessions
 
 The plan home now links to 我的场次, with a list of saved performance sessions, an add-from-Damai action, current-session indicator, explicit switch and deletion of inactive sessions. Normal saves archive the existing valid plan and update only the same event/city/date/time entry. Each session retains its own public prices, quantity, maximum total, deadline, refresh interval and opening/follow-up schedule. Existing single-plan data is preserved without clearing app storage. The library is local, bounded to 50 entries and rejects corrupted data rather than silently overwriting it.
