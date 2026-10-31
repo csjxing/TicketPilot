@@ -1,5 +1,15 @@
 # TicketPilot 开发进度与接手入口
 
+## code39 installed and live countdown verified
+
+v0.3.12-preview/code39 was installed after the user confirmed vivo's installer. The installed APK was pulled back and matched the frozen release bytes. The real Guangzhou December 4 reservation page produced the correct November 3, 2026 14:00 Asia/Shanghai opening timestamp without typed time. The catalog overlay displayed changing HH:mm:ss.SSS values in both expanded and right-edge compact states. This proves local display, not server clock calibration or order timing.
+
+December 4 at 19:00 was saved through the real overlay review/save flow with 1380/1680, two tickets, maximum 3360 as a PREPARE test draft. The normal preferences UI saved openingPrice=1680. Readback confirmed the plan's opening time and strategy, armed=false and PREPARE. The saved library contains this Guangzhou draft and the preserved Changsha plan. November 27 selection reads still failed despite visible selection and bounded scroll/stable-frame attempts; that second Guangzhou plan was not saved. Cross-plan switching remains unverified. No reservation, monitor, order or payment was started. Original display settings were restored and read back (charging-awake 0; timeout 600000).
+
+The user's question about the disabled automatic-order choice is valid: production checkout/pending-payment adaptation remains incomplete. The previous operator-driven test order does not prove autonomous app checkout. Do not enable the choice by bypassing the adapter gate or claim countdown success completes the purchase flow. Next development must distinguish this missing app capability from actual operation authorization.
+
+Source 21e2cf9 is pushed to main. Frozen APK/source ZIP/manifest are under exports/release-v0.3.12-preview; 780 tests, Lint and assemble passed. Public binary publication is still blocked by the previously observed browser file-upload permission. The existing empty code38 draft is preserved, not published; no new draft or file-relay upload was made. No code39 public download URL is verified.
+
 ## 2026-10-31 code39 correction and code38 device results
 
 The user resumed testing. v0.3.11-preview/code38 was wirelessly installed on the paired vivo, then the installed base APK was pulled and its hash matched the frozen release. Existing accessibility permission and authorized Shizuku input were connected. Real catalog drag, right-edge collapse and expansion passed. December 4 Guangzhou and all five prices were read; 1680 was in the scrollable helper content. The earlier visual inference that it was missing was incorrect. All reservation prices remain UNKNOWN stock evidence.
