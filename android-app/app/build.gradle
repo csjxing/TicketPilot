@@ -7,8 +7,8 @@ android {
         applicationId 'cn.local.tickethelper'
         minSdk 30
         targetSdk 35
-        versionCode 38
-        versionName '0.3.11-preview'
+        versionCode 39
+        versionName '0.3.12-preview'
     }
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17

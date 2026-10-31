@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-31 code39 correction and code38 device results
+
+The user resumed testing. v0.3.11-preview/code38 was wirelessly installed on the paired vivo, then the installed base APK was pulled and its hash matched the frozen release. Existing accessibility permission and authorized Shizuku input were connected. Real catalog drag, right-edge collapse and expansion passed. December 4 Guangzhou and all five prices were read; 1680 was in the scrollable helper content. The earlier visual inference that it was missing was incorrect. All reservation prices remain UNKNOWN stock evidence.
+
+Countdown testing found that catalog capture time was monotonic but SaleAnnouncement expects calendar time. v0.3.12-preview/code39 preserves both original timestamps through OCR/revalidation and uses the right clock for each consumer. Final 780 tests, Lint and assemble passed; installation and countdown validation are pending. No Guangzhou plan is yet saved. Test-draft quantity/budget are not Guangzhou purchase authorization. No reservation, monitor, order or payment was started.
+
+Temporary charging-awake setting is currently 7; restore its original 0 before finishing device work. Screen timeout remains the original 600000. GitHub draft from code38 remains unpublished without assets; file upload permission is still the known publication blocker. No file relay was used.
+
 ## code38 handoff checkpoint
 
 Final code38 checks passed: 780 tests, no failures/errors, Lint and APK build. Source b9ae4f3 is pushed to main and the same-signature APK/source ZIP/manifest are frozen under exports/release-v0.3.11-preview. Code38 wireless cover installation was cancelled by the phone installer (User rejected permissions); the phone remains code36/v0.3.9 and subsequently had a black/asleep screen. User was asked to unlock/reconnect power for a fresh normal installation and to confirm the installer. New drag/dock/countdown UI has not been tested on device. No Guangzhou plan has yet been saved; no monitoring, reservation, order or payment was started.

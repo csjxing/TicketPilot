@@ -491,7 +491,7 @@ public final class CatalogController implements AutoCloseable {
                     java.time.LocalDateTime.of(java.time.LocalDate.parse(session.date),java.time.LocalTime.parse(session.time))
                             .atZone(java.time.ZoneId.of("Asia/Shanghai")).toInstant(),500,1500,cn.local.tickethelper.core.MonitorConfig.Mode.PREPARE);
             opening=cn.local.tickethelper.core.SaleAnnouncement.read(
-                    new cn.local.tickethelper.core.Observation(TARGET,frame.items,frame.capturedAt),target,System.currentTimeMillis());
+                    new cn.local.tickethelper.core.Observation(TARGET,frame.items,frame.capturedAtEpochMs),target,System.currentTimeMillis());
         } catch(RuntimeException unavailable) { /* Missing public announcement stays unspecified. */ }
         finish("TIERS", "已读取当前可见票档。显示票价不代表有票；请选择你愿意接受的票价，再确认应用。",
                 List.of(), List.of(), tiers.stream().map(entry -> entry.value).collect(java.util.stream.Collectors.toList()),opening);
@@ -500,15 +500,15 @@ public final class CatalogController implements AutoCloseable {
     private interface FrameCallback { void accept(Frame frame); }
     private static final class Frame {
         final List<UiItem> items;
-        final long capturedAt, pageGeneration;
+        final long capturedAt, capturedAtEpochMs, pageGeneration;
         final cn.local.tickethelper.core.Observation.VerifiedSelection evidence;
         final cn.local.tickethelper.catalog.CatalogSelection catalogSelection;
         final int nativeWindowId;
         final String nativeSignature;
-        Frame(List<UiItem> items, long capturedAt, long pageGeneration,
+        Frame(List<UiItem> items, long capturedAt, long capturedAtEpochMs, long pageGeneration,
               cn.local.tickethelper.core.Observation.VerifiedSelection evidence, cn.local.tickethelper.catalog.CatalogSelection catalogSelection,
               int nativeWindowId, String nativeSignature) {
-            this.items = items; this.capturedAt = capturedAt; this.pageGeneration = pageGeneration;
+            this.items = items; this.capturedAt = capturedAt; this.capturedAtEpochMs = capturedAtEpochMs; this.pageGeneration = pageGeneration;
             this.evidence = evidence; this.catalogSelection = catalogSelection;
             this.nativeWindowId = nativeWindowId; this.nativeSignature = nativeSignature;
         }
@@ -519,6 +519,9 @@ public final class CatalogController implements AutoCloseable {
         List<UiItem> nodes = service.catalogReadNodes();
         if (!CatalogParser.blockedReason(nodes).isEmpty()) { fail("当前为登录、验证、订单或异常页面，请先在大麦处理。", "restricted_page"); return; }
         long token = generation, page = service.catalogWindowGeneration(), captured = SystemClock.elapsedRealtime();
+        // Input freshness uses monotonic time; public opening announcements use calendar time.
+        // Keep both original timestamps through OCR/revalidation rather than refreshing the age.
+        long capturedEpochMs = System.currentTimeMillis();
         long boundary = service.catalogReadBoundaryGeneration();
         int windowId = service.catalogCurrentReadWindow();
         String signature = nativeSignature(nodes);
@@ -527,11 +530,11 @@ public final class CatalogController implements AutoCloseable {
             // Fixed controls can remain valid while unrelated homepage carousels emit content changes.
             // The last input guard re-reads their exact semantic identity, bounds and active window.
             appStore.appendEvent("CATALOG", "read_native:nodes=" + nodes.size(), 0);
-            callback.accept(new Frame(nodes, captured, page, null, null, root.getWindowId(), signature));
+            callback.accept(new Frame(nodes, captured, capturedEpochMs, page, null, null, root.getWindowId(), signature));
             return;
         }
         if (reader.isBusy()) { fail("上次页面读取尚未结束，请稍后重试。", "reader_busy"); return; }
-        reader.readCatalogGuarded(nodes, System.currentTimeMillis(), (texts, evidence, catalogSelection, proof, error) -> {
+        reader.readCatalogGuarded(nodes, capturedEpochMs, (texts, evidence, catalogSelection, proof, error) -> {
             if (!validToken(token)) return;
             if (!safe()) return;
             if (error != null) { fail("大麦当前画面无法读取，请检查是否出现验证或受保护页面。", "reader_unavailable"); return; }
@@ -552,13 +555,13 @@ public final class CatalogController implements AutoCloseable {
                                         && SystemClock.elapsedRealtime() - captured < FRAME_LIFETIME
                                         && ReadStability.sameNative(nodes, service.catalogReadNodes())) {
                                     appStore.appendEvent("READ_RECOVERY", "read_content_revalidated", SystemClock.elapsedRealtime() - captured);
-                                    deliverOcrFrame(callback, nodes, texts, evidence, catalogSelection, captured, currentPage);
+                                    deliverOcrFrame(callback, nodes, texts, evidence, catalogSelection, captured, capturedEpochMs, currentPage);
                                 } else retryCatalogRead(callback, attempt);
                             });
                 } else retryCatalogRead(callback, attempt);
                 return;
             }
-            deliverOcrFrame(callback, nodes, texts, evidence, catalogSelection, captured, page);
+            deliverOcrFrame(callback, nodes, texts, evidence, catalogSelection, captured, capturedEpochMs, page);
         });
     }
 
@@ -575,7 +578,7 @@ public final class CatalogController implements AutoCloseable {
 
     private void deliverOcrFrame(FrameCallback callback, List<UiItem> nodes, List<UiItem> texts,
                                  cn.local.tickethelper.core.Observation.VerifiedSelection evidence,
-                                 CatalogSelection catalogSelection, long captured, long page) {
+                                 CatalogSelection catalogSelection, long captured, long capturedEpochMs, long page) {
         if (!safe()) return;
         if (page != service.catalogWindowGeneration() || SystemClock.elapsedRealtime() - captured >= FRAME_LIFETIME) return;
         List<UiItem> all = new ArrayList<>(nodes);
@@ -586,7 +589,7 @@ public final class CatalogController implements AutoCloseable {
         }
         if (!CatalogParser.blockedReason(all).isEmpty()) { fail("当前为登录、验证、订单或异常页面，请先在大麦处理。", "restricted_page"); return; }
         // captured and typed selection evidence keep their original times after visual validation.
-        callback.accept(new Frame(all, captured, page, evidence, catalogSelection, -1, null));
+        callback.accept(new Frame(all, captured, capturedEpochMs, page, evidence, catalogSelection, -1, null));
     }
 
     /** One bounded tap, then a new read must verify its effect. No stored coordinates and no retry. */

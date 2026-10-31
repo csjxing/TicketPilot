@@ -1,5 +1,11 @@
 # Android 构建与真机验收
 
+## 2026-10-31 v0.3.12-preview / code39: catalog observation clock correction
+
+The live code38 installation was pulled back from the paired vivo and matched the frozen APK hash. Dragging the catalog title moved only the helper; right-edge collapse and tap-to-expand were observed on the real Guangzhou reservation page. A single selected December 4 session and all five visible prices (480/680/980/1380/1680) were read; the last tier was below the helper's scroll viewport, not missing from parsing. No plan was saved during that read.
+
+Live testing exposed a clock-domain bug: CatalogController supplied monotonic capture time to SaleAnnouncement, whose observation age is evaluated against calendar time. Code39 keeps both original capture timestamps through OCR and frame revalidation. Input/page freshness still uses monotonic time; opening-announcement freshness uses the original calendar timestamp. No observation age is refreshed and no order gate changes. Countdown, plan saving/switching, installation and public release of code39 still require separate evidence.
+
 ## 2026-10-31 v0.3.11-preview / code38: movable overlays and selected-session countdown
 
 Both the Damai catalog panel and waiting-for-sale countdown now have a drag handle and a right-edge compact mode. Taps on the compact handle expand; dragging only updates the helper window, never sends input to Damai. The catalog pill no longer spans nearly the whole screen. The selected-session panel displays HH:mm:ss.SSS after a future opening announcement is read from the same fresh, scoped reservation frame; no clock is invented when the label cannot be read. Saving the reviewed catalog plan carries that timestamp into its own schedule. Starting monitoring retains the existing timer ownership and stop/cleanup rules. Text updates are throttled to 50ms and use phone system time; this is not server calibration or a millisecond order guarantee.
