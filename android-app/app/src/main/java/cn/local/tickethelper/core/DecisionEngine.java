@@ -245,6 +245,13 @@ public final class DecisionEngine {
         }
         if (candidates.isEmpty()) return result(Decision.State.UNKNOWN, "target_prices_not_readable");
 
+        // An already selected fallback must not hide explicit primary shortage. Release only
+        // the price preference; confirmation still needs the next independently fresh read.
+        if(c.openingPrice>0 && c.prices.size()>1 && wantedPrices.equals(List.of(c.openingPrice))
+                && verified!=null && verified.selectedPrice!=null && verified.selectedPrice!=c.openingPrice
+                && candidates.stream().allMatch(x->x.negative))
+            return result(Decision.State.OUT_OF_STOCK,Decision.Action.NONE,null,"all_target_tiers_explicitly_unavailable",verified);
+
         if (verified != null && verified.selectedPrice != null) {
             List<Candidate> matching = byPrice(candidates, verified.selectedPrice);
             boolean contraryNativeSelection = allCandidates.stream().anyMatch(x -> x.item.source == UiItem.Source.NODE

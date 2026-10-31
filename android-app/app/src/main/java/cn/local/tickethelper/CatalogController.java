@@ -483,8 +483,18 @@ public final class CatalogController implements AutoCloseable {
         if (!selected) { fail("所选场次没有显示可核实的选中状态，无法将票档归属于它。请在大麦确认后重读。", "session_selection_unverified"); return; }
         List<CatalogParser.Entry<CatalogTier>> tiers = CatalogParser.tiers(frame.items);
         if (tiers.isEmpty()) { fail("该场次未读到可明确识别的单人票价，请在大麦检查票档。", "tiers_unavailable"); return; }
+        java.time.Instant opening=null;
+        try {
+            List<Integer> prices=tiers.stream().map(entry->entry.value.price).distinct().collect(java.util.stream.Collectors.toList());
+            cn.local.tickethelper.core.MonitorConfig target=new cn.local.tickethelper.core.MonitorConfig(event.label,event.city,
+                    session.date,session.time,prices,1,prices.stream().max(Integer::compareTo).orElse(0),
+                    java.time.LocalDateTime.of(java.time.LocalDate.parse(session.date),java.time.LocalTime.parse(session.time))
+                            .atZone(java.time.ZoneId.of("Asia/Shanghai")).toInstant(),500,1500,cn.local.tickethelper.core.MonitorConfig.Mode.PREPARE);
+            opening=cn.local.tickethelper.core.SaleAnnouncement.read(
+                    new cn.local.tickethelper.core.Observation(TARGET,frame.items,frame.capturedAt),target,System.currentTimeMillis());
+        } catch(RuntimeException unavailable) { /* Missing public announcement stays unspecified. */ }
         finish("TIERS", "已读取当前可见票档。显示票价不代表有票；请选择你愿意接受的票价，再确认应用。",
-                List.of(), List.of(), tiers.stream().map(entry -> entry.value).collect(java.util.stream.Collectors.toList()));
+                List.of(), List.of(), tiers.stream().map(entry -> entry.value).collect(java.util.stream.Collectors.toList()),opening);
     }
 
     private interface FrameCallback { void accept(Frame frame); }
@@ -745,10 +755,13 @@ public final class CatalogController implements AutoCloseable {
         handler.postDelayed(() -> { if (validToken(token)) action.run(); }, delay);
     }
     private void finish(String stage, String status, List<CatalogProject> projects, List<CatalogSession> sessions, List<CatalogTier> tiers) {
+        finish(stage,status,projects,sessions,tiers,null);
+    }
+    private void finish(String stage,String status,List<CatalogProject> projects,List<CatalogSession> sessions,List<CatalogTier> tiers,java.time.Instant opening) {
         active = false; generation++;
         if (handoff != null) { handoff.cancel(); handoff = null; }
         if (timeout != null) { handler.removeCallbacks(timeout); timeout = null; }
-        CatalogStore.update(stage, status, query, event, session, projects, sessions, tiers, System.currentTimeMillis());
+        CatalogStore.update(stage, status, query, event, session, projects, sessions, tiers, System.currentTimeMillis(),opening);
         appStore.appendEvent("CATALOG", "public_" + stage.toLowerCase(java.util.Locale.ROOT), 0);
         deliverResult();
     }

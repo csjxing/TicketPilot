@@ -52,6 +52,16 @@ public final class CatalogOverlay implements AutoCloseable {
     private String message = "";
     private Button primary;
     private TextView hint;
+    private TextView countdown;
+    private long openingMs;
+    private int fullX=-1,fullY=-1,smallY=-1;
+    private final android.os.Handler clock=new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable clockTick=new Runnable(){@Override public void run(){
+        if(!open || attached==null || countdown==null || openingMs<=0)return;
+        long left=openingMs-System.currentTimeMillis();
+        countdown.setText(left>0?"距开售\n"+cn.local.tickethelper.core.CountdownText.format(left):"已到开售时间");
+        clock.postDelayed(this,50);
+    }};
 
     public CatalogOverlay(AccessibilityService service, int initialQuantity, Actions actions) {
         if (service == null || actions == null) throw new IllegalArgumentException("Overlay owner is required");
@@ -67,7 +77,7 @@ public final class CatalogOverlay implements AutoCloseable {
     public void showReady() { showReady("先在大麦选好日期和时间，再点下面的按钮。"); }
     public void showReady(String instruction) {
         open = true; collapsed = false; reviewing = false; saving = false; mode = Mode.READY;
-        message = instruction == null ? "" : instruction; snapshot = null; draft.clear(); render();
+        message = instruction == null ? "" : instruction;openingMs=0; snapshot = null; draft.clear(); render();
     }
 
     public void showResult(CatalogStore.Snapshot result) {
@@ -78,7 +88,7 @@ public final class CatalogOverlay implements AutoCloseable {
             return;
         }
         boolean same = snapshot != null && snapshot.revision == result.revision;
-        snapshot = result; mode = Mode.RESULT; collapsed = false; saving = false; message = "";
+        snapshot = result;openingMs=result.openingAt==null?0:result.openingAt.toEpochMilli(); mode = Mode.RESULT; collapsed = false; saving = false; message = "";
         if (!same) reviewing = false;
         List<String> keys = new ArrayList<>();
         for (CatalogTier tier : result.tiers) if (tier.price > 0) keys.add(tier.key);
@@ -88,7 +98,7 @@ public final class CatalogOverlay implements AutoCloseable {
     public void showFailure(String reason) {
         if (!open) return;
         mode = Mode.FAILURE; collapsed = false; reviewing = false; saving = false;
-        snapshot = null; draft.clear();
+        snapshot = null;openingMs=0; draft.clear();
         message = reason == null || reason.isBlank() ? "请在大麦选好场次，再试一次。" : reason;
         render();
     }
@@ -110,27 +120,27 @@ public final class CatalogOverlay implements AutoCloseable {
 
     private void capture() {
         if (!open) return;
-        snapshot = null; reviewing = false; saving = false; draft.clear();
+        snapshot = null;openingMs=0; reviewing = false; saving = false; draft.clear();
         hideForRead(); actions.captureSelected();
     }
 
     private void render() {
         if (!open) return;
-        removeWindow(); primary = null; hint = null;
+        removeWindow(); primary = null; hint = null;countdown=null;
         LinearLayout panel = column(); panel.setPadding(dp(14), dp(10), dp(14), dp(12));
         panel.setBackground(shape(WHITE, BORDER, 18)); panel.setElevation(dp(12));
         panel.setFilterTouchesWhenObscured(true);
         if (collapsed) {
-            LinearLayout pill = row();
-            Button expand = link("票务助手 · 展开", v -> { collapsed = false; render(); });
-            pill.addView(expand, new LinearLayout.LayoutParams(0, -2, 1));
-            pill.addView(closeButton()); panel.addView(pill); attach(panel, false); return;
+            Button expand = link("票务助手 ↗", v -> { collapsed = false; render(); });
+            panel.addView(expand);addCountdown(panel);attach(panel, false);
+            OverlayDrag.bind(expand,panel,windows,(x,y)->smallY=y);return;
         }
         LinearLayout heading = row();
-        TextView title = text("TicketPilot · 当前场次", 15, INK, true);
+        TextView title = text("⠿ 当前场次", 15, INK, true);title.setContentDescription("拖动悬浮助手");
         heading.addView(title, new LinearLayout.LayoutParams(0, -2, 1));
-        heading.addView(link("收起", v -> { collapsed = true; render(); })); heading.addView(closeButton());
+        heading.addView(link("靠右收起", v -> { collapsed = true; render(); })); heading.addView(closeButton());
         panel.addView(heading);
+        addCountdown(panel);
         boolean full = mode == Mode.RESULT;
         LinearLayout content = column();
         if (full) {
@@ -160,6 +170,13 @@ public final class CatalogOverlay implements AutoCloseable {
             panel.addView(button(mode == Mode.FAILURE ? "处理好了，重新读取" : "使用当前场次", true, v -> capture()), spacing(12));
         }
         attach(panel, full);
+        OverlayDrag.bind(title,panel,windows,(x,y)->{fullX=x;fullY=y;});
+    }
+
+    private void addCountdown(LinearLayout target) {
+        if(openingMs<=0)return;
+        countdown=text("",collapsed?11:16,ACCENT,true);countdown.setTypeface(Typeface.MONOSPACE);
+        target.addView(countdown,spacing(4));
     }
 
     private void renderChoices(LinearLayout target) {
@@ -199,6 +216,7 @@ public final class CatalogOverlay implements AutoCloseable {
 
     private void renderReview(LinearLayout target) {
         add(target, "核对后保存", 20, INK, true, 8);
+        if(snapshot.openingAt!=null)add(target,"开售 "+snapshot.openingAt.atZone(java.time.ZoneId.of("Asia/Shanghai")).format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"))+" 北京时间",14,ACCENT,true,8);
         add(target, snapshot.event.label, 15, INK, true, 12);
         add(target, sessionLabel(), 14, ACCENT, true, 8);
         add(target, priceLabel() + " · " + draft.quantity() + " 张", 16, INK, true, 12);
@@ -271,15 +289,17 @@ public final class CatalogOverlay implements AutoCloseable {
     }
     private void attach(View view, boolean expandedResult) {
         Rect screen = windows.getCurrentWindowMetrics().getBounds();
-        int width = Math.max(1, Math.min(screen.width() - dp(20), dp(480)));
+        int width = collapsed?dp(124):Math.max(1, Math.min(screen.width() - dp(20), dp(480)));
         int height = expandedResult ? Math.max(1, (int) (screen.height() * .55f)) : WindowManager.LayoutParams.WRAP_CONTENT;
         WindowManager.LayoutParams params = new WindowManager.LayoutParams(width, height,
                 WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
                 WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
                 PixelFormat.TRANSLUCENT);
-        params.gravity = Gravity.TOP | Gravity.CENTER_HORIZONTAL; params.y = dp(10);
+        params.gravity = Gravity.TOP | Gravity.LEFT;
+        params.x=collapsed?Math.max(0,screen.width()-width):fullX<0?(screen.width()-width)/2:Math.min(fullX,Math.max(0,screen.width()-width));
+        params.y=collapsed?(smallY<0?dp(120):smallY):(fullY<0?dp(10):fullY);
         params.setTitle("TicketPilot · 悬浮选票");
-        try { windows.addView(view, params); attached = view; }
+        try { windows.addView(view, params); attached = view;OverlayDrag.keepOnScreen(view,windows);clock.removeCallbacks(clockTick);clock.post(clockTick); }
         catch (RuntimeException unavailable) {
             open = false; snapshot = null; draft.clear(); attached = null;
             actions.closed();
@@ -287,6 +307,7 @@ public final class CatalogOverlay implements AutoCloseable {
         }
     }
     private void removeWindow() {
+        clock.removeCallbacks(clockTick);
         View prior = attached; attached = null;
         if (prior != null) {
             try { windows.removeViewImmediate(prior); } catch (IllegalArgumentException detached) { /* Already removed by the system. */ }

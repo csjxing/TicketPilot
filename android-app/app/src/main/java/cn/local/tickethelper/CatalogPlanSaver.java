@@ -21,6 +21,7 @@ public final class CatalogPlanSaver {
         AppStore store = new AppStore(context);
         MonitorConfig proposed = CatalogPlanSelection.buildConfig(snapshot, keys, quantity, query,
                 store.loadConfig(), System.currentTimeMillis());
+        if(snapshot.openingAt!=null)proposed=proposed.withTiming(snapshot.openingAt,proposed.followUpMinutes);
         // Check the current revision immediately before changing any saved target.
         String issue = CatalogPlanSelection.problem(snapshot, keys, quantity, query, System.currentTimeMillis());
         if (issue != null) throw new IllegalArgumentException(issue);

@@ -1,5 +1,13 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-10-31 v0.3.11-preview / code38: movable overlays and selected-session countdown
+
+Both the Damai catalog panel and waiting-for-sale countdown now have a drag handle and a right-edge compact mode. Taps on the compact handle expand; dragging only updates the helper window, never sends input to Damai. The catalog pill no longer spans nearly the whole screen. The selected-session panel displays HH:mm:ss.SSS after a future opening announcement is read from the same fresh, scoped reservation frame; no clock is invented when the label cannot be read. Saving the reviewed catalog plan carries that timestamp into its own schedule. Starting monitoring retains the existing timer ownership and stop/cleanup rules. Text updates are throttled to 50ms and use phone system time; this is not server calibration or a millisecond order guarantee.
+
+Code37's primary-tier fallback was additionally checked for an already-selected lower tier: an explicit primary shortage can release the fallback preference, but confirmation still waits for a new fresh observation. No order profile, quantity/amount gate or journal barrier was removed.
+
+Live code36 retained the original Changsha plan. A normal operator selection and local catalog read successfully identified Guangzhou November 27 with visible 480/680/980/1380 tiers; 1680 was below the footer and was not read in that result. Further scroll/read attempts rejected the selection instead of guessing. No Guangzhou plan has yet been saved and neither of the two requested sessions is claimed configured. New overlay device validation, full five-tier reads, both saved sessions and code38 installation/publication remain pending. No reservation, order or payment was submitted.
+
 ## 2026-10-31 v0.3.10-preview / code37: primary opening tier with shortage fallback
 
 User specified Sun Yanzi Guangzhou November 27 and December 4 as the sessions to save: primary opening tier 1680, with 1680/1380 monitored after the primary is explicitly unavailable. Quantity two and 3360 maximum are test-draft defaults, not a newly confirmed purchase authorization. No Guangzhou order is authorized yet.

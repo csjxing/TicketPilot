@@ -27,6 +27,14 @@ public class DecisionEngineTest {
     private Observation obs(List<UiItem> items) { return new Observation("cn.damai",items,now); }
     private Decision eval(List<UiItem> items) { return engine().evaluate(config(MonitorConfig.Mode.PREPARE),obs(items),0); }
 
+    @Test public void alreadySelectedFallbackStillRequiresFreshReadAfterPrimaryShortage() {
+        MonitorConfig c=config(MonitorConfig.Mode.PREPARE).withTiming(Instant.ofEpochMilli(now),30).withOpeningPrice(1680);
+        DecisionEngine engine=engine();engine.beginOpeningStrategy(c,now-1000);
+        Observation.VerifiedSelection evidence=new Observation.VerifiedSelection(now,c.date,c.time,1380,1,1380,null);
+        Decision first=engine.evaluate(c,new Observation("cn.damai",sku(tier("1680元 缺货",500,false),tier("1380元 有票",700,true)),now,evidence),0);
+        assertEquals(Decision.State.OUT_OF_STOCK,first.state);assertEquals(Decision.Action.NONE,first.action);
+        assertTrue(engine.expandAfterOpeningShortage(c,first));
+    }
     @Test public void disabledOrPlainPricesDoNotMeanInStock() {
         Decision d=eval(sku(tier("1680元",500,false),tier("1380元",700,false),tier("980元",900,false)));
         assertEquals(Decision.State.UNKNOWN,d.state); assertEquals(Decision.Action.NONE,d.action);
