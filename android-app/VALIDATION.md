@@ -1,5 +1,12 @@
 # Android 构建与真机验收
 
+## 2026-11-01 code41: computer collaboration candidate
+
+Removed daily Navigator entry points and catalog assistant links. The old encrypted model settings UI is forced to settings-only mode, preserving keys, usage and saved plans. Added a phone-local 15-minute single-operator lease, same-UID nonexported fixed-operation receiver, a phone collaboration page and portable Python CLI/Tk GUI. Pairing codes go to adb stdin only; LAN endpoints and the phone identity digest stay in private computer state. Wrong-phone identity and mismatched request receipts reject. Session expiry, reboot/clock discontinuity and another owner reject; phone monitor arming rejects while the collaboration window is active. No arbitrary input, order, payment or cloud-control operation was added. The lease does not revoke or constrain independently authorized external ADB clients.
+
+791 Java unit checks and 7 Python companion checks passed; Lint and assemble passed after fixing an orientation constant. Real phone installation, GUI/receiver round trip, second-computer behavior and Fuzhou official opening/checkout are pending at this candidate checkpoint. User selected same-Wi-Fi scope and permitted a bounded 15-minute phone test. No Yu sample test or purchase authorization is carried forward.
+
+
 ## 2026-10-31 code40 wireless installation and Guangzhou catalog follow-up
 
 User confirmed the vivo installer; installed code40 APK was read back and matched the frozen release (56,234,433 bytes; SHA256 08aa61b381c91cfe8a5f0904c16b92334404d22574461d26efc0d1a9b91f2168). Accessibility was bound and the existing authorized Shizuku input connected via the preparation UI. No uninstall or data clearing.

@@ -26,6 +26,8 @@
             </intent-filter>
         </activity>
         <activity android:name=".HistoryActivity" android:exported="false" />
+        <activity android:name=".ComputerLinkActivity" android:exported="false" />
+        <receiver android:name=".ComputerLinkReceiver" android:exported="false" />
         <activity android:name=".HelpActivity" android:exported="false" />
         <activity android:name=".AdvancedSettingsActivity" android:exported="false" />
         <activity android:name=".AiAssistantActivity" android:exported="false" />

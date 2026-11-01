@@ -156,7 +156,7 @@ public final class MainActivity extends Activity {
         else if ("saved".equals(route)) renderSavedPlans();
         else renderPlan();
         navItem("计划", "plan", () -> navigate("plan"));
-        navItem("领航员", "navigator", () -> openNavigator());
+        navItem("电脑", "computer", () -> startActivity(new Intent(this,ComputerLinkActivity.class)));
         navItem("我的", "account", () -> navigate("account"));
         lastRender = signature();
     }
@@ -171,7 +171,6 @@ public final class MainActivity extends Activity {
             add(body, "先在大麦选一场", 34, INK, true, 28);
             add(body, "在大麦搜索演出、点选日期，再用悬浮助手读取当前场次。", 14, MUTED, false, 10);
             body.addView(button("打开大麦，显示悬浮助手", true, v -> openCatalog()), space(22));
-            body.addView(textAction("还没想好？让领航员帮我整理需求  ↗", () -> openAi("配置建议", "购票需求", query.isBlank() ? "我想看演出，请帮我明确艺人、城市、日期和预算，先问我最重要的一项。" : query)), space(12));
         } else {
             renderTicket(c);
             if (c.mode != MonitorConfig.Mode.ALERT) renderViewerPreparation(c);
@@ -184,7 +183,6 @@ public final class MainActivity extends Activity {
         if (MonitorService.instance != null && MonitorService.instance.isWaitingForDamai()) detail = "正在打开大麦并核对目标页面；剩余 " + MonitorService.instance.waitingForDamaiSeconds() + " 秒。";
         add(next, detail, 14, Color.rgb(211,220,242),false,8);
         body.addView(next, space(24));
-        body.addView(textAction("不知道怎么继续？打开领航员  ↗", this::openNavigator),space(8));
         if (hasTarget) {
             section("购票条件", () -> navigate("preferences"), "调整");
             summaryRow("有票以后", mode(c.mode));
@@ -276,7 +274,6 @@ public final class MainActivity extends Activity {
             inputs.addView(shorter,weighted());LinearLayout.LayoutParams gap=weighted();gap.leftMargin=dp(12);inputs.addView(longer,gap);body.addView(inputs,space(9));
         }
         add(body,"每次在最短与最长之间随机等待；两值相同则固定等待。有票后的连续选票不额外等一轮。页面加载另需时间。",12,MUTED,false,12);
-        body.addView(textAction("让领航员解释怎么选  ↗", () -> openAi("配置建议","购票条件","请解释提醒、选票到确认页的区别，以及快速、常用、稳健的操作节奏。不要承诺服务器刷新频率或购票成功。")),space(12));
         preferenceError=text("",13,Color.rgb(184,51,63),false);body.addView(preferenceError,space(8));
         actionFooter("保存条件","仅保存设置，不会自动开始。",this::savePreferences);
     }
@@ -378,7 +375,6 @@ public final class MainActivity extends Activity {
         setupStep(2,"允许消息通知",alerts,"发现变化或需要你处理时通知你。");
         setupStep(3,"连接点击服务",click,AppStore.INPUT_SHIZUKU.equals(store.getInputMode())?ShizukuInputBridge.get(this).status():"当前使用标准触控，依赖页面读取服务。");
         if(!damaiInstalled())add(body,"尚未发现官方大麦，请先在手机安装。",14,INK,true,18);
-        body.addView(textAction("这一步怎么做？让领航员带我  ↗",() -> openAi("异常分析","手机准备","请根据当前准备状态，明确我接下来只需要点哪个按钮、去哪个页面，完成后怎样返回。")),space(20));
         body.addView(textAction("点击方式与高级权限  ›",() -> openAdvanced("phone")),space(8));
         String label=!page?(access == AccessibilityReadiness.State.OFF ? "开启无障碍服务"
                 : access == AccessibilityReadiness.State.UNKNOWN ? "查看系统无障碍设置" : "重新连接无障碍服务")
@@ -396,9 +392,9 @@ public final class MainActivity extends Activity {
     }
 
     private void renderAccount() {
-        add(body,"我的",30,INK,true,8);add(body,"管理模型、手机权限和购票条件。",14,MUTED,false,8);
+        add(body,"我的",30,INK,true,8);add(body,"管理手机权限、购票条件和维护工具。",14,MUTED,false,8);
         section("常用",null,"");
-        menuRow("AI 模型","接口、密钥与用量",() -> {pause("正在设置模型，监控暂停。");startActivity(new Intent(this,AiAssistantActivity.class).putExtra("screen","settings").putExtra("origin_label","我的"));});
+        menuRow("本机模型设置（兼容）","保留原接口与用量；协作使用电脑 AI",() -> {pause("正在设置模型，监控暂停。");startActivity(new Intent(this,AiAssistantActivity.class).putExtra("screen","settings").putExtra("origin_label","我的"));});
         menuRow("手机准备",deviceReady()?"已具备运行条件":"检查还缺哪一步",() -> navigate("setup"));
         menuRow("购票条件","有票后的动作与检查速度",() -> navigate("preferences"));
         menuRow("开售与回流票","等开售立即核查，或现在连续跟进30分钟",() -> startActivity(new Intent(this,TimingActivity.class)));
@@ -406,17 +402,17 @@ public final class MainActivity extends Activity {
         menuRow("抢票记录","查看有票、缺票、操作和随机等待",() -> startActivity(new Intent(this,HistoryActivity.class)));
         menuRow("使用指南与记录","查步骤、查看运行结果",() -> navigate("help"));
         section("维护",null,"");
-        menuRow("远程诊断","发到文件中转站，让电脑继续排查",() -> startActivity(new Intent(this,RelayActivity.class)));
+        menuRow("电脑协作","无线配对、电脑接手与诊断",() -> startActivity(new Intent(this,ComputerLinkActivity.class)));
+        menuRow("分享诊断","主动发到文件中转站",() -> startActivity(new Intent(this,RelayActivity.class)));
         menuRow("应用更新与云端协作","安装更新和高级同步设置",() -> startActivity(new Intent(this,CloudActivity.class)));
         menuRow("高级工具","手动目标、兼容设置与导出",() -> openAdvanced("target"));
         menuRow("电脑接手与备份","源码、知识库与交接资料",() -> startActivity(new Intent(this,TransferActivity.class)));
-        add(body,"TicketPilot 0.3.6 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
+        add(body,"TicketPilot 0.3.14 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
         footer.setVisibility(View.GONE);
     }
 
     private void renderHelp() {
         header("使用指南与记录","先看下一步，需要时再查详细原因。",() -> navigate("account"));
-        menuRow("领航员带我继续","根据当前步骤给出下一步",this::openNavigator);
         menuRow("离线使用指南","权限、选演出、手机独立使用",() -> startActivity(new Intent(this,HelpActivity.class)));
         section("最近状态",null,"");
         add(body,safeStatus(),14,INK,false,0);
@@ -465,7 +461,6 @@ public final class MainActivity extends Activity {
         add(body, reason.isEmpty()?safeStatus():reason, 15, INK, false, 10);
         setupStep(1, "检查大麦当前页面", false, "如需登录或验证，请在大麦完成，再打开目标票档页。");
         body.addView(textAction("打开大麦处理  ↗", this::openDamai), space(8));
-        body.addView(textAction("不明白原因？让领航员解释  ↗", this::openNavigator), space(12));
         actionFooter("已处理，重新核对计划", "下一页会再次核对；不会自动恢复。", this::confirmStart);
     }
 
@@ -474,20 +469,6 @@ public final class MainActivity extends Activity {
         if(!deviceReady()){navigate("setup");toast("先完成手机准备，就能读取真实演出。");return;}
         MonitorService monitor = MonitorService.instance;
         if (monitor != null) monitor.openInPlaceCatalog();
-    }
-
-    private void openNavigator() {
-        MonitorConfig c=store.loadConfig();
-        boolean issue=!deviceReady()||isPaused(safeStatus());
-        openAi(issue?"异常分析":"配置建议",issue?"当前步骤":"购票计划",issue
-                ?"请看当前步骤和准备状态，告诉我现在要做什么、点哪里，以及完成后会发生什么。先给一个最重要的下一步。"
-                :c.eventKeyword.isEmpty()?"我想选一场演出，请一步一步帮我明确想看谁、哪个城市、场次和预算。":"请核对当前购票计划，说明现在已经选好了什么、接下来要去哪里操作。不要把历史库存当成实时库存。");
-    }
-
-    private void openAi(String topic,String origin,String question) {
-        boolean hasIssue = isPaused(safeStatus());
-        AiContextRepository.recordTaskIssue(store.getStatus());pause("正在使用领航员，监控保持暂停。");
-        startActivity(new Intent(this,AiAssistantActivity.class).putExtra("topic",topic).putExtra("origin_label",origin).putExtra("question",question).putExtra("has_issue",hasIssue));
     }
 
     private void openAdvanced(String section) {

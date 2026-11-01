@@ -85,7 +85,7 @@ public final class PilotJourney {
                     "当前自动锁票尚未完成，可选择提醒或选票到确认页。", "选择可用方式", "只保存你选的方式，稍后再由你明确开始。");
         if (state.paused || state.stopState == MonitorStopState.NEEDS_ATTENTION)
             return result(Stage.PAUSED, Action.RESOLVE_PAUSE, 2, "需要你处理", "先解决这次暂停",
-                    "看清暂停原因，处理后重新核对；不会自行重复点击。", "查看处理步骤", "领航员会显示当前问题与可执行的下一步，不自动恢复任务。");
+                    "看清暂停原因，处理后重新核对；不会自行重复点击。", "查看处理步骤", "处理页会显示当前问题与下一步，不自动恢复任务。");
         if (state.stopState == MonitorStopState.PAUSED)
             return result(Stage.PAUSED, Action.START, 2, "已暂停", "任务已停下，随时可以重新核对",
                     "没有继续检查或发出操作。重新开始前，再核对计划和大麦页面。", "核对后重新开始", "先展示本次计划，由你确认后才启动。");

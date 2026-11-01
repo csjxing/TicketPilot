@@ -171,7 +171,7 @@ public final class CatalogActivity extends Activity {
         else if ("TIERS".equals(snapshot.stage)) renderTiers(snapshot);
         else if (busy) renderHandoff(snapshot);
         else renderBlocked(snapshot);
-        if (!busy && !reviewRequested) renderAiHelp(snapshot, searching);
+
         if (!busy && !searching && !reviewRequested) {
             LinearLayout utilities = row();
             utilities.addView(link("重新读取", v -> captureCurrent()), new LinearLayout.LayoutParams(0, -2, 1));
@@ -454,41 +454,6 @@ public final class CatalogActivity extends Activity {
                 .setMessage("下一步会重新读取大麦中的日期。请在大麦保持这场演出的场次页打开；读取后点助手通知回来选日期。当前已保存的计划不会改变。")
                 .setNegativeButton("暂不修改", null)
                 .setPositiveButton("重新读取场次", (dialog, which) -> captureCurrent()).show();
-    }
-
-    private void renderAiHelp(CatalogStore.Snapshot snapshot, boolean searching) {
-        String topic, label, prompt;
-        if ("BLOCKED".equals(snapshot.stage) && !searching) {
-            topic = "异常分析"; label = "让领航员解释这一步";
-            prompt = "我在选择演出时遇到了问题，页面提示：" + safe(snapshot.status) + "。请告诉我最可能的原因和下一步该点哪里；不能确定的部分请说明。";
-        } else if ("TIERS".equals(snapshot.stage) && !searching) {
-            topic = "票档解释"; label = "让领航员帮我选票价";
-            prompt = "请帮我理解刚读到的票价和缺货标记，说明如何按预算选择。不要把可见票价当成有票，也不要编造视野或座位信息。";
-        } else if ("SESSIONS".equals(snapshot.stage) && !searching) {
-            topic = "场次比较"; label = "让领航员帮我选日期";
-            prompt = "请比较刚读到的演出场次，把日期、星期和时间列清楚。如果需要我的出行偏好，问一个简单的问题。";
-        } else {
-            topic = "配置建议"; label = searching ? "让领航员帮我理清需求" : "让领航员帮我看这些演出";
-            prompt = searching ? "请帮我整理想看的演出、城市、日期和预算。先问我一个最必要的问题，不要虚构演出或库存。"
-                    : "请根据刚从大麦读到的公开演出结果，帮助我比较城市和项目；不要虚构未读到的场次或库存。";
-        }
-        final String selectedTopic = topic, selectedPrompt = prompt;
-        LinearLayout ai = column();
-        divider(ai);
-        ai.addView(link("✦  " + label + "  ›", v -> {
-            if (!isCurrent(snapshot)) return;
-            String promptAtClick = selectedPrompt;
-            if (searching) {
-                String currentQuery = (searchInput == null ? queryDraft : searchInput.getText().toString()).trim();
-                if (!currentQuery.isEmpty()) promptAtClick = "我想搜索：" + currentQuery + "。" + promptAtClick;
-            }
-            startActivity(new Intent(this, AiAssistantActivity.class)
-                    .putExtra("has_issue", "BLOCKED".equals(snapshot.stage))
-                    .putExtra("topic", selectedTopic).putExtra("question", promptAtClick)
-                    .putExtra("origin_label", "TIERS".equals(snapshot.stage) && !searching ? "选择票价"
-                            : "SESSIONS".equals(snapshot.stage) && !searching ? "选择场次" : "选择演出"));
-        }));
-        page.addView(ai, spaced(20));
     }
 
     private void openSelectionHelp() {

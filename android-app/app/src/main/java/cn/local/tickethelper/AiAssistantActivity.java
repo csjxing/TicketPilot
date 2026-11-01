@@ -109,9 +109,9 @@ public final class AiAssistantActivity extends Activity {
         String origin = getIntent().getStringExtra("origin_label");
         if (origin != null && !origin.trim().isEmpty()) originLabel = origin.replaceAll("[\\r\\n]", " ").trim();
         if (originLabel.length() > 24) originLabel = originLabel.substring(0, 24);
-        settingsOnlyEntry = "settings".equals(getIntent().getStringExtra("screen"));
+        settingsOnlyEntry = true; // Navigator removed; preserve only the existing encrypted settings UI.
         build();
-        String initialQuestion = state == null ? getIntent().getStringExtra("question") : null;
+        String initialQuestion = null;
         question.setText(initialQuestion == null ? "" : initialQuestion);
         restoreSettings();
         installListeners();
@@ -296,7 +296,8 @@ public final class AiAssistantActivity extends Activity {
     }
 
     private void showScreen(String value) {
-        String next = "settings".equals(value) ? "settings" : "notes".equals(value) ? "notes" : "ask";
+        String next = "settings"; // Historical ask/notes deep links cannot reopen the removed navigator.
+        settingsToggle.setVisibility(View.GONE);
         if (!screen.equals(next) && (sending || preparing)) {
             invalidatePreview(); stopWaiting("已离开本次分析，停止等待回复；已发出的请求可能仍产生费用。");
         }
@@ -425,7 +426,7 @@ public final class AiAssistantActivity extends Activity {
             handler.post(() -> {
                 if (destroyed) return;
                 saving = false;
-                if (saved) { acceptProviderState(metadata, true); settingsFeedback.setText("已保存，可以返回 AI 助手。"); showRequestStatus("模型设置已保存。"); toast("模型设置已保存"); }
+                if (saved) { acceptProviderState(metadata, true); settingsFeedback.setText("已保存。原接口配置和用量继续保留。"); showRequestStatus("模型设置已保存。"); toast("模型设置已保存"); }
                 else { settingsDirty = true; updateControls(); String error = failure == null ? "未能保存。请核对接口、模型和新密钥。" : failure; settingsFeedback.setText(error); showRequestStatus(error); }
                 refreshSettingsSummary();
             });

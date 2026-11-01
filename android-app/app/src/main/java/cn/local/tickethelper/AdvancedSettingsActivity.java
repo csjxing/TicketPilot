@@ -163,8 +163,8 @@ public final class AdvancedSettingsActivity extends Activity {
         draftText = text("", 12, ACCENT, true); actionDock.addView(draftText, spaced(6));
 
         aiHelpCard = next;
-        aiHelpTitle = text("AI 帮你少想一步", 12, ACCENT, true); aiHelpCard.addView(aiHelpTitle, spaced(12));
-        contextAiButton = button("说说你想看什么", false, v -> openContextAi());
+        aiHelpTitle = text("电脑协作", 12, ACCENT, true); aiHelpCard.addView(aiHelpTitle, spaced(12));
+        contextAiButton = button("用电脑 AI 检查与增强", false, v -> openContextAi());
         aiHelpCard.addView(contextAiButton, spaced(9));
         LinearLayout details = expandable(page, "运行详情", "连接状态和最近的处理结果", false);
         statusText = text("", 13, MUTED, false); details.addView(statusText);
@@ -786,7 +786,7 @@ public final class AdvancedSettingsActivity extends Activity {
 
     private void openAiAssistant() {
         pauseForInputSettings("正在使用 AI 辅助；监控保持暂停，返回后需主动开始。");
-        startActivity(new Intent(this, AiAssistantActivity.class));
+        startActivity(new Intent(this, ComputerLinkActivity.class));
     }
 
     private boolean openDamai() {
@@ -989,7 +989,7 @@ public final class AdvancedSettingsActivity extends Activity {
                 + IntervalSeconds.format(saved.maxIntervalMs) + " 秒  ›");
         journeyText.setText(saved.eventKeyword.isEmpty() ? "① 选演出   →   ② 定条件   →   ③ 开始"
                 : running ? "✓ 已选演出   →   ✓ 已定条件   →   ● 运行中" : "✓ 已选演出   →   ② 定条件   →   ③ 开始");
-        aiHelpTitle.setText(paused ? "卡住了？AI 帮你看原因" : saved.eventKeyword.isEmpty() ? "还没想好怎么选？" : "AI 帮你核对这份计划");
+        aiHelpTitle.setText(paused ? "电脑协作排查" : saved.eventKeyword.isEmpty() ? "从大麦读取场次" : "用电脑检查与增强");
         contextAiButton.setText(running ? "暂停并让 AI 分析" : paused ? "分析这次暂停" : saved.eventKeyword.isEmpty() ? "一句话整理购票需求" : "帮我看看场次和预算");
         changeTargetButton.setVisibility(saved.eventKeyword.isEmpty() ? View.GONE : View.VISIBLE);
         directStartButton.setText(step.button); directStartButton.setEnabled(true); directStartButton.setAlpha(1f);
@@ -1050,7 +1050,7 @@ public final class AdvancedSettingsActivity extends Activity {
         if (!damaiReady) addText(content, "请先在手机安装官方大麦。", 14, TEXT, false, 12);
         if (clickReady) addText(content, "✓ 点击服务已就绪", 14, ACCENT, true, 12);
         else if (shizuku) content.addView(button("连接点击服务", false, null), spaced(12));
-        content.addView(button("AI 帮我看设置问题", false, v -> openAiContext("异常分析", "手机准备",
+        content.addView(button("用电脑排查设置问题", false, v -> openAiContext("异常分析", "手机准备",
                 "请解释当前手机准备还缺哪些条件，并用我能直接照做的短步骤说明。没有现场证据的状态请说未知。")), spaced(14));
         AlertDialog dialog = showSheet("准备好这台手机", content, "完成，返回", null);
         // A settings screen must remain reachable, not hidden behind this sheet on return.
@@ -1067,7 +1067,7 @@ public final class AdvancedSettingsActivity extends Activity {
             else if ("允许有票和异常提醒".equals(label)) child.setOnClickListener(v -> {
                 dialog.dismiss(); requestNotifications();
             });
-            else if ("AI 帮我看设置问题".equals(label)) child.setOnClickListener(v -> {
+            else if ("用电脑排查设置问题".equals(label)) child.setOnClickListener(v -> {
                 dialog.dismiss(); openAiContext("异常分析", "手机准备", "请解释当前手机准备还缺哪些条件，并用我能直接照做的短步骤说明。没有现场证据的状态请说未知。");
             });
         }
@@ -1228,7 +1228,7 @@ public final class AdvancedSettingsActivity extends Activity {
         options.setOnCheckedChangeListener((g, id) -> customInputs.setVisibility(id == custom.getId() ? View.VISIBLE : View.GONE));
         TextView validation = text("", 13, Color.rgb(168, 61, 46), false); content.addView(validation, spaced(6));
         addText(content, "每次在这个范围内随机等待；两值相同则固定。有票后的连续选票不额外等待。页面加载另需时间，不等于服务器刷新频率。", 12, MUTED, false, 8);
-        Button explain = button("AI 帮我理解怎么选", false, null); content.addView(explain, spaced(12));
+        Button explain = button("用电脑检查计划", false, null); content.addView(explain, spaced(12));
         AlertDialog dialog = showSheet("检查速度", content, "取消", "保存速度");
         explain.setOnClickListener(v -> { dialog.dismiss(); openAiContext("配置建议", "检查速度",
                 "请解释当前 " + IntervalSeconds.format(previous.minIntervalMs) + "–" + IntervalSeconds.format(previous.maxIntervalMs)
@@ -1255,10 +1255,8 @@ public final class AdvancedSettingsActivity extends Activity {
     }
 
     private void openAiContext(String topic, String origin, String question) {
-        cn.local.tickethelper.ai.AiContextRepository.recordTaskIssue(store.getStatus());
-        pauseForInputSettings("正在使用 AI 辅助，监控保持暂停。");
-        startActivity(new Intent(this, AiAssistantActivity.class).putExtra("topic", topic)
-                .putExtra("origin_label", origin).putExtra("question", question));
+        pauseForInputSettings("电脑协作中，监控保持暂停。");
+        startActivity(new Intent(this, ComputerLinkActivity.class));
     }
 
     private void section(LinearLayout target, String index, String title) {

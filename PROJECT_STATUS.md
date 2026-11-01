@@ -1,5 +1,14 @@
 # TicketPilot 开发进度与接手入口
 
+## 2026-11-01 code41 candidate: remove Navigator, add same-Wi-Fi computer collaboration
+
+The user changed the validation target to Nicholas Tse Fuzhou and requested removing Navigator. Daily Navigator and catalog AI entry points were removed; the old Activity is restricted to the existing encrypted provider-settings compatibility page. Original keys, usage, plans, signing and order records are retained. Main navigation is Plan / Computer / My.
+
+Added a user-opened 15-minute phone-local single-operator session plus portable handoff/computer_link.py CLI/Tk GUI: LAN mDNS address choices, official adb pairing with code via stdin, connection/device-identity checks, claim/status/redacted diagnostics/pause/release, and an AI handoff prompt. The bridge is nonexported, same-UID and fixed-operation only, with no cloud server, arbitrary input or purchase method. Active collaboration prevents normal phone monitor arming. It coordinates this tool and the app, not other independent ADB clients; existing Android ADB pairing remains until the user revokes it in system settings. The user explicitly chose same-Wi-Fi scope.
+
+Candidate checks: 791 Java tests plus 7 Python companion tests, Lint and assemble passed. The original paired vivo was rediscovered after its port changed; the user unlocked and allowed 15 minutes of testing. Installation and live bridge/Fuzhou validation are pending. The old HTTPS event link could not directly resolve to the app, so official app UI navigation is required. No real-order target details or attendees were approved; no order or Yu sample test is authorized. Automatic checkout remains incomplete and production registry stays empty.
+
+
 ## 2026-10-31 code40 installed; Guangzhou only, no further Yu sample tests
 
 The user explicitly stopped using Yu Chengqing as a test event. Do not invoke the fixed-Hangzhou debug acceptance receiver or reuse past order/attendee approvals. The phone's old confirmation page was exited without selecting attendees or submitting. Continue with the user's Sun Yanzi Guangzhou plans; actual purchase quantity/budget/attendees still need current confirmation before any real order.

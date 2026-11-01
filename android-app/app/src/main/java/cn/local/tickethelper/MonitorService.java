@@ -380,6 +380,9 @@ public final class MonitorService extends AccessibilityService {
     private void armInternal(LockAuthorization authorization) {
         if (running) return;
         if (!connectionReady) return;
+        if (new ComputerLinkStore(this).remaining() > 0) {
+            pause("电脑协作中。请先在电脑页结束协作，再从手机开始监控。"); return;
+        }
         closeInPlaceCatalog();
         if (catalog != null) catalog.cancelInternal(false);
         config = confirmationTest ? confirmationTestConfig : store.loadConfig();

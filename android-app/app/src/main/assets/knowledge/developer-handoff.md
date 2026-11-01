@@ -59,7 +59,7 @@ doctor 使用 Python 标准库；找不到 adb 时可按 START_HERE 通过 --adb
 - CatalogActivity.java、CatalogStore.java、catalog/：从真实大麦搜索、读取并选择项目、场次、票价。详情进入票档仍有人工交接。
 - MonitorService.java：前台可见页面读取、运行状态、输入派发、异常停止和通知。服务重连不会自动开始。
 - AppStore.java：本机配置、暂停状态、通用检查记录。日志有界保留。
-- AiAssistantActivity.java、ai/：可选模型设置、加密密钥、限额、预览与请求、经过筛选的上下文，以及人工确认的本机经验笔记。该模块提供建议与待核对配置草稿，不是点击或下单执行器。
+- AiAssistantActivity.java 只保留原模型设置兼容页，领航员入口已移除。电脑协作见 ComputerLinkActivity / ComputerLinkReceiver、handoff/computer_link.py 和 COMPUTER_LINK.md。历史 ai/：可选模型设置、加密密钥、限额、预览与请求、经过筛选的上下文，以及人工确认的本机经验笔记。该模块提供建议与待核对配置草稿，不是点击或下单执行器。
 - adapter/DamaiSkuAdapter.java：原生容器与本地 OCR 的票档适配，同帧核实日期、价格、数量和总额。
 - core/DecisionEngine.java、PageFailureSignals.java：库存与界面决策，明确错误优先于订单标题与库存信号。
 - ShizukuInputBridge.java 与 core/InputCancellationPolicy.java：用户授权后的本机输入，取消和派发状态分离。
