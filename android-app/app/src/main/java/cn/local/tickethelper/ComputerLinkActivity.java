@@ -20,7 +20,8 @@ public final class ComputerLinkActivity extends Activity {
     @Override public void onCreate(Bundle state){super.onCreate(state);store=new ComputerLinkStore(this);
         getWindow().setStatusBarColor(Color.rgb(247,248,252));getWindow().setNavigationBarColor(Color.WHITE);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR|View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
-        ScrollView scroll=new ScrollView(this);LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);
+        getWindow().setDecorFitsSystemWindows(false);
+        ScrollView scroll=new ScrollView(this);scroll.setOnApplyWindowInsetsListener((v,insets)->{android.graphics.Insets bars=insets.getInsets(android.view.WindowInsets.Type.systemBars());v.setPadding(bars.left,bars.top,bars.right,bars.bottom);return insets;});LinearLayout page=new LinearLayout(this);page.setOrientation(LinearLayout.VERTICAL);
         page.setPadding(dp(24),dp(16),dp(24),dp(30));page.setBackgroundColor(Color.rgb(247,248,252));scroll.addView(page);setContentView(scroll);
         button(page,"‹ 返回",()->finish());text(page,"电脑协作",30,true);
         text(page,"在同一 Wi-Fi 下，让电脑上的 AI 帮你检查和改进。",15,false);

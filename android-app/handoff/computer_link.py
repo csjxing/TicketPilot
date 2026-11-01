@@ -147,71 +147,20 @@ class Companion:
             raise LinkError('未取得本次请求回执。请核对手机版本和协作开关；不要据此重试下单。')
 
 
-def gui(client):
-    try:
-        import tkinter as tk
-        from tkinter import ttk
-    except ImportError:
-        raise LinkError('此 Python 没有 Tk 图形库，可使用 status/pair/connect 等命令行入口。') from None
-    root = tk.Tk(); root.title('TicketPilot · 电脑协作'); root.geometry('680x700')
-    frame = ttk.Frame(root, padding=22); frame.pack(fill='both', expand=True)
-    ttk.Label(frame, text='连接这台手机', font=('', 22, 'bold')).pack(anchor='w')
-    ttk.Label(frame, text='电脑与手机连接同一 Wi-Fi；手机保持解锁。').pack(anchor='w', pady=10)
-    fields=[]
-    def field(label, secret=False):
-        ttk.Label(frame, text=label).pack(anchor='w', pady=(8, 2))
-        v=tk.StringVar(); widget=ttk.Entry(frame,textvariable=v,show='•') if secret else ttk.Combobox(frame,textvariable=v)
-        widget.pack(fill='x'); fields.append(widget);return v
-    pairing=field('配对地址（手机“使用配对码配对设备”弹窗）')
-    code=field('配对码 · 仅本机使用，不保存', True)
-    endpoint=field('连接地址（无线调试详情页的 IP 地址和端口）')
-    buttons=[]
-    output=tk.Text(frame,height=11,wrap='word'); output.pack(side='bottom',fill='both',expand=True,pady=14)
-    def work(fn):
-        for b in buttons:b.configure(state='disabled')
-        def run():
-            try: value=fn(); message=json.dumps(value,ensure_ascii=False,indent=2)
-            except LinkError as e: message=str(e)
-            except Exception: message='操作失败；未输出原始设备信息。'
-            def finish():
-                output.delete('1.0','end');output.insert('end',message)
-                for b in buttons:b.configure(state='normal')
-            root.after(0,finish)
-        threading.Thread(target=run,daemon=True).start()
-    def pair_now():
-        host,secret=pairing.get(),code.get();code.set('');work(lambda:client.pair(host,secret))
-    def discover_now():
-        for b in buttons:b.configure(state='disabled')
-        def run():
-            try: found=client.discover(); message='已查找；从地址下拉框选择与手机页面一致的一项。'
-            except LinkError as e: found={'pair':[],'connect':[]}; message=str(e)
-            def finish():
-                fields[0]['values']=found['pair']; fields[2]['values']=found['connect']
-                output.delete('1.0','end');output.insert('end',message)
-                for b in buttons:b.configure(state='normal')
-            root.after(0,finish)
-        threading.Thread(target=run,daemon=True).start()
-    b=ttk.Button(frame,text='查找同一 Wi-Fi 的调试地址',command=discover_now);b.pack(fill='x',pady=6);buttons.append(b)
-    b=ttk.Button(frame,text='首次使用：配对这台电脑' ,command=pair_now);b.pack(fill='x',pady=6);buttons.append(b)
-    def connect_now():
-        host=endpoint.get();work(lambda:client.connect(host))
-    b=ttk.Button(frame,text='连接手机',command=connect_now);b.pack(fill='x',pady=6);buttons.append(b)
-    ttk.Label(frame,text='手机点“允许电脑协作15分钟”，然后在这里接手。').pack(anchor='w',pady=8)
-    row=ttk.Frame(frame);row.pack(fill='x')
-    for text,op in [('接手','claim'),('状态','status'),('读取诊断','diagnostics'),('结束协作','release')]:
-        b=ttk.Button(row,text=text,command=lambda op=op:work(lambda:client.request(op)));b.pack(side='left',expand=True,fill='x',padx=2);buttons.append(b)
-    root.mainloop()
+def gui(client, open_browser=True):
+    from computer_link_web import gui as browser_gui
+    browser_gui(client, open_browser)
 
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--adb',default='adb');p.add_argument('--state-dir',type=Path)
     p.add_argument('command',choices=['gui','pair','connect']+sorted(OPS))
-    p.add_argument('--address');p.add_argument('--output',type=Path)
+    p.add_argument('--address');p.add_argument('--output',type=Path);p.add_argument('--no-browser',action='store_true')
     a=p.parse_args(argv)
     try:
         c=Companion(a.adb,a.state_dir)
-        if a.command=='gui':gui(c);return 0
+        if a.command=='gui':gui(c,not a.no_browser);return 0
         if a.command=='pair':result=c.pair(a.address or input('手机配对地址: ').strip(),getpass.getpass('手机配对码（不回显）: '))
         elif a.command=='connect':result=c.connect(a.address or input('手机连接地址: ').strip())
         else:result=c.request(a.command)
@@ -221,4 +170,6 @@ def main(argv=None):
         print(json.dumps({'status':'unavailable','message':str(e)},ensure_ascii=False));return 2
 
 
-if __name__=='__main__':sys.exit(main())
+if __name__=='__main__':
+    sys.modules.setdefault('computer_link',sys.modules[__name__])
+    sys.exit(main())

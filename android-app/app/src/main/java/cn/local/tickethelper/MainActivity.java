@@ -407,7 +407,7 @@ public final class MainActivity extends Activity {
         menuRow("应用更新与云端协作","安装更新和高级同步设置",() -> startActivity(new Intent(this,CloudActivity.class)));
         menuRow("高级工具","手动目标、兼容设置与导出",() -> openAdvanced("target"));
         menuRow("电脑接手与备份","源码、知识库与交接资料",() -> startActivity(new Intent(this,TransferActivity.class)));
-        add(body,"TicketPilot 0.3.14 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
+        add(body,"TicketPilot 0.3.15 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
         footer.setVisibility(View.GONE);
     }
 
