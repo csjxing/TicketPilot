@@ -8,7 +8,7 @@ import static cn.local.tickethelper.checkout.CheckoutProfile.Role.*;
  * No names, phone numbers, document numbers, event names or screen coordinates are embedded.
  */
 public final class Damai937Confirmation {
-    public static final String VERSION = "9.0.37#109003700";
+    public static final String VERSION = "9.0.37.5#109003705";
     private static final String ID = "cn.damai:id/";
     private Damai937Confirmation() { }
     public static CheckoutProfile profile() {

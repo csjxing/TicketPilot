@@ -13,7 +13,13 @@ import java.util.function.LongSupplier;
  */
 public final class OrderCheckoutAdapter {
     private OrderCheckoutAdapter() { }
-    private static final List<CheckoutProfile> VERIFIED_PROFILES = List.of();
+    private static final List<CheckoutProfile> VERIFIED_PROFILES = List.of(Damai937Confirmation.profile());
+
+    /** Confirmation-only: no pending-payment profile registered yet. Post-submit requires manual payment check. */
+    public static boolean isConfirmationOnlyVerified() {
+        CheckoutCapabilities caps = CheckoutCapabilities.forVersion(VERIFIED_PROFILES, Damai937Confirmation.VERSION);
+        return caps.confirmationSubmission && !caps.pendingPaymentRead;
+    }
 
     /** Debug acceptance only: confirmation capture is not full checkout capability. */
     public static CheckoutParseResult readConfirmationProbe(AccessibilityService service, LongSupplier generation,
@@ -46,18 +52,21 @@ public final class OrderCheckoutAdapter {
                 observation.submitBinding, generation, observation.frameGeneration, deadline) != null;
     }
 
-    /** Complete page-reading capability; this is not evidence that an order has been created. */
+    /** Complete page-reading capability requires both confirmation and pending-payment profiles. */
     public static boolean isLiveVerified() {
-        return VERIFIED_PROFILES.stream().anyMatch(profile -> supportedVersion(profile.appVersion));
+        return CheckoutCapabilities.forVersion(VERIFIED_PROFILES, Damai937Confirmation.VERSION).completeCheckoutRead();
     }
 
     public static boolean supportsInstalledVersion(Context context) {
-        return supportedVersion(installedVersion(context));
+        try {
+            android.content.pm.PackageInfo info = context.getPackageManager().getPackageInfo("cn.damai", 0);
+            return info.versionName != null && info.versionName.startsWith("9.0.37");
+        } catch (Exception e) { return false; }
     }
 
-    /** Reviewed confirmation only. A missing pending profile must remain an unknown result. */
+    /** Reviewed confirmation only. A missing pending profile does not block confirmation-only mode. */
     public static boolean isConfirmationSubmissionVerified() {
-        return VERIFIED_PROFILES.stream().anyMatch(profile -> confirmationSupportedVersion(profile.appVersion));
+        return CheckoutCapabilities.forVersion(VERIFIED_PROFILES, Damai937Confirmation.VERSION).confirmationSubmission;
     }
 
     public static boolean supportsInstalledConfirmationSubmission(Context context) {

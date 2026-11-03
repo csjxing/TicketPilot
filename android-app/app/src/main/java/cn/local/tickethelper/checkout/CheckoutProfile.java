@@ -138,7 +138,7 @@ public final class CheckoutProfile {
             return this;
         }
         Builder native937Confirmation() {
-            if (!"cn.damai".equals(packageName) || !"9.0.37#109003700".equals(appVersion))
+            if (!"cn.damai".equals(packageName) || !"9.0.37.5#109003705".equals(appVersion))
                 throw new IllegalArgumentException("native_confirmation_version_mismatch");
             native937Confirmation = true;
             return this;

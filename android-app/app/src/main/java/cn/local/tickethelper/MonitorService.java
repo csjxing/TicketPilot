@@ -80,7 +80,7 @@ public final class MonitorService extends AccessibilityService {
     private long selectionStartGeneration;
     private Runnable panelWatch;
     private String inputMode = AppStore.INPUT_ACCESSIBILITY;
-    private boolean running, busy, targetSeen, screenReceiverRegistered;
+    private boolean running, busy, targetSeen, screenReceiverRegistered, confirmationOnly;
     private Decision semanticDetailDecision;
     private long semanticDetailBoundary;
     private int semanticDetailWindow;
@@ -390,12 +390,16 @@ public final class MonitorService extends AccessibilityService {
         if (!confirmationTest && store.isImportedTargetPendingReview()) {
             pause("换机目标尚未核对，请在助手重新选择演出后开始。"); return;
         }
+        confirmationOnly = false;
         if (config.mode == MonitorConfig.Mode.LOCK_ORDER) {
-            if (!confirmationTest && !OrderCheckoutAdapter.isLiveVerified()) {
-                pause("自动下单的确认页及待付款页适配尚未真机验收，请先使用到确认页暂停模式。"); return;
+            boolean live = OrderCheckoutAdapter.isLiveVerified();
+            boolean confOnly = OrderCheckoutAdapter.isConfirmationOnlyVerified();
+            if (!confirmationTest && !live && !confOnly) {
+                pause("自动下单的确认页适配尚未真机验收，请先使用到确认页暂停模式。"); return;
             }
+            confirmationOnly = !live && confOnly;
             if (!confirmationTest && !OrderCheckoutAdapter.supportsInstalledVersion(this)) {
-                pause("当前大麦版本的订单页面尚未适配，请使用到确认页暂停模式。"); return;
+                pause("当前大麦版本尚未适配，请使用到确认页暂停模式。"); return;
             }
             if (authorization == null || !authorization.validFor(config, System.currentTimeMillis())
                     || (confirmationTest ? confirmationTestViewers : store.getViewerBindings()).size() != config.quantity
@@ -609,7 +613,10 @@ public final class MonitorService extends AccessibilityService {
             if (running && token == generation && busy)
                 stop("界面读取或操作超时，任务已暂停。", "BLOCKED", "operation_timeout", true);
         };
-        handler.postDelayed(watchdog, 8000);
+        boolean openingBurst = config.saleAt != null
+                && Math.abs(System.currentTimeMillis() - config.saleAt.toEpochMilli()) < 60_000;
+        long watchdogMs = openingBurst ? 4000 : (confirmationTest || liveOrderAttempt != null ? 5000 : 8000);
+        handler.postDelayed(watchdog, watchdogMs);
         if (confirmationTest || liveOrderAttempt != null) {
             handleOrderCheckout(token, pageToken); return;
         }
@@ -926,9 +933,15 @@ public final class MonitorService extends AccessibilityService {
         SaleTiming.Tick timing = timingTick(); return timing != null && timing.mayReadOfficialPage();
     }
     private long observationDelay() {
+        // During the critical 60s around sale start, scan faster
+        if (config.saleAt != null && Math.abs(System.currentTimeMillis() - config.saleAt.toEpochMilli()) < 60_000)
+            return 150;
         SaleTiming.Tick timing = timingTick();
         return timing == null ? SaleTiming.LIVE_READ_DELAY_MS : Math.max(1, timing.nextWakeMs);
     }
+
+    /** Short delay during checkout to reduce end-to-end submission latency. */
+    private long checkoutDelay() { return 200; }
 
     private void handle(Decision decision, long began, long token, long pageToken,
                         int nodeCount, int ocrCount, boolean usedOcr) {
@@ -971,7 +984,9 @@ public final class MonitorService extends AccessibilityService {
                     || (decision.state != Decision.State.TIER_SELECTED && decision.state != Decision.State.OUT_OF_STOCK
                         && !QuantityTransition.isIncreaseProposal(decision));
             if (stillPending) {
-                if (SystemClock.elapsedRealtime() - transitionAt >= 6000) {
+                long transitionTimeout = (transitionAction == Decision.Action.CONFIRM_TIER
+                        || transitionAction == Decision.Action.OPEN_TICKETS) ? 3000 : 6000;
+                if (SystemClock.elapsedRealtime() - transitionAt >= transitionTimeout) {
                     stop("操作后的页面变化未能核实，已暂停，请手动检查。", "UNKNOWN",
                             "transition_unverified:" + decision.reason, true);
                 } else { busy = false; schedule(observationDelay()); }
@@ -989,6 +1004,7 @@ public final class MonitorService extends AccessibilityService {
                 stop("目标配置已失效或到达截止时间，任务停止。", decision.state.name(), decision.reason, true); return;
             case CHECKOUT:
                 if (config.mode == MonitorConfig.Mode.LOCK_ORDER) {
+                    if (confirmationOnly) status("已进入确认页（仅确认提交模式），正在读取页面。");
                     handleOrderCheckout(token, pageToken); return;
                 }
                 stop("已检测到订单相关页面，请核对信息并手动继续；尚未确认生成订单。", "CHECKOUT", decision.reason, true); return;
@@ -1031,8 +1047,11 @@ public final class MonitorService extends AccessibilityService {
             act(decision, token, pageToken); return;
         }
         busy = false;
-        long wait = decision.action == Decision.Action.NONE ? observationDelay()
-                : Math.min(observationDelay(), SaleTiming.actionWaitMs(false, SystemClock.elapsedRealtime(), nextActionAt));
+        long baseDelay = observationDelay();
+        if (decision.action == Decision.Action.CONFIRM_TIER
+                || decision.action == Decision.Action.OPEN_TICKETS) baseDelay = Math.min(baseDelay, 150);
+        long wait = decision.action == Decision.Action.NONE ? baseDelay
+                : Math.min(baseDelay, SaleTiming.actionWaitMs(false, SystemClock.elapsedRealtime(), nextActionAt));
         schedule(Math.max(1, wait));
     }
 
@@ -1083,8 +1102,9 @@ public final class MonitorService extends AccessibilityService {
     }
 
     private void handleOrderCheckout(long token, long pageToken) {
-        if (!valid(token, pageToken)) { busy = false; schedule(700); return; }
-        if ((!confirmationTest && !OrderCheckoutAdapter.isLiveVerified()) || !orderGrantCurrent() || orderAttempts == null) {
+        if (!valid(token, pageToken)) { busy = false; schedule(checkoutDelay()); return; }
+        boolean live = OrderCheckoutAdapter.isLiveVerified();
+        if ((!confirmationTest && !live && !confirmationOnly) || !orderGrantCurrent() || orderAttempts == null) {
             stop("自动下单适配或本次授权无法核实，已暂停。", "CHECKOUT", "order_adapter_or_grant_unverified", true); return;
         }
         try {
@@ -1097,8 +1117,8 @@ public final class MonitorService extends AccessibilityService {
             if (attempt == null && read.viewerResult != null
                     && read.viewerResult.state == ViewerMatcher.State.SELECT_PROPOSAL) {
                 if (viewerSelectionTargets.containsKey(viewerTargetKey(read))) {
-                    if (SystemClock.elapsedRealtime() - viewerSelectionTargets.get(viewerTargetKey(read)) < 6000) {
-                        busy = false; schedule(700); return;
+                    if (SystemClock.elapsedRealtime() - viewerSelectionTargets.get(viewerTargetKey(read)) < 3000) {
+                        busy = false; schedule(checkoutDelay()); return;
                     }
                     stop("观演人点击后的选中状态无法确认，已暂停；尚未提交订单。",
                             "CHECKOUT", "viewer_selection_not_verified", true); return;
@@ -1119,7 +1139,7 @@ public final class MonitorService extends AccessibilityService {
                 case READY_TO_RESERVE:
                     submitOrderOnce(decision.proposal, token, pageToken); return;
                 case WAIT_RESULT:
-                    busy = false; status("已发出一次订单提交，正在核实大麦结果；不会重复提交。"); schedule(700); return;
+                    busy = false; status("已发出一次订单提交，正在核实大麦结果；不会重复提交。"); schedule(checkoutDelay()); return;
                 case CONFIRMED_PENDING:
                     if (liveOrderAttempt == null || decision.pendingOrder == null
                             || !"official_pending_order_verified".equals(decision.reason)) {

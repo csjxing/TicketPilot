@@ -251,7 +251,7 @@ public final class MainActivity extends Activity {
         choice("只提醒我","有票时通知我，我去大麦继续操作。",preferredMode==MonitorConfig.Mode.ALERT,true,() -> {readCustomPace();preferredMode=MonitorConfig.Mode.ALERT;render();});
         choice("帮我选票","选到确认购买页，提交订单和付款由我完成。",preferredMode==MonitorConfig.Mode.PREPARE,true,() -> {readCustomPace();preferredMode=MonitorConfig.Mode.PREPARE;render();});
         boolean lockAvailable=orderAdapterAvailable();
-        choice(lockAvailable?"发现票后下单，停在待付款":"自动下单 · 当前版本尚未适配",
+        choice(lockAvailable?(OrderCheckoutAdapter.isLiveVerified()?"发现票后下单，停在待付款":"仅确认提交 · 提交后请立即手动付款"):"自动下单 · 当前版本尚未适配",
                 lockAvailable?"核实票档、张数、观演人和金额后提交一次；付款由我完成。":"确认购买页和待付款页须通过当前大麦版本的真实适配后才能使用。",
                 preferredMode==MonitorConfig.Mode.LOCK_ORDER,lockAvailable,() -> {readCustomPace();preferredMode=MonitorConfig.Mode.LOCK_ORDER;render();});
         int primaryPrice=preferenceBase.prices.stream().max(Integer::compareTo).orElse(0);
@@ -407,7 +407,7 @@ public final class MainActivity extends Activity {
         menuRow("应用更新与云端协作","安装更新和高级同步设置",() -> startActivity(new Intent(this,CloudActivity.class)));
         menuRow("高级工具","手动目标、兼容设置与导出",() -> openAdvanced("target"));
         menuRow("电脑接手与备份","源码、知识库与交接资料",() -> startActivity(new Intent(this,TransferActivity.class)));
-        add(body,"TicketPilot 0.3.15 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
+        add(body,"TicketPilot 0.3.16 · 支持1–2张选票计划\n"+(orderAdapterAvailable()?"发现票后提交一次订单，付款由你完成。":"当前大麦版本尚未适配自动下单，付款由你完成。"),12,MUTED,false,28);
         footer.setVisibility(View.GONE);
     }
 
@@ -533,7 +533,10 @@ public final class MainActivity extends Activity {
         }
     }
 
-    private boolean orderAdapterAvailable(){return OrderCheckoutAdapter.isLiveVerified()&&OrderCheckoutAdapter.supportsInstalledVersion(this);}
+    private boolean orderAdapterAvailable(){
+        return (OrderCheckoutAdapter.isLiveVerified() || OrderCheckoutAdapter.isConfirmationOnlyVerified())
+                && OrderCheckoutAdapter.supportsInstalledVersion(this);
+    }
     private void openViewers(){pause("正在明确本次观演人，监控保持暂停。");refreshReviewAfterViewers="review".equals(route);startActivity(new Intent(this,ViewerSetupActivity.class));}
 
     private void pause(String reason) {

@@ -158,7 +158,7 @@ public final class DecisionEngine {
         if (all.isEmpty()) return result(Decision.State.UNKNOWN, "empty_page");
         if (BLOCK.matcher(all).find()) { reset(); return result(Decision.State.BLOCKED, "verification_login_or_network"); }
         if (contains(all, "提交订单", "立即提交", "待付款", "立即支付", "付款剩余", "支付成功")) {
-            reset(); return result(Decision.State.CHECKOUT, "manual_checkout_required");
+            reset(); return result(Decision.State.CHECKOUT, "checkout_page_detected");
         }
         // A loading/error shell can expose the order title before any checkout content exists.
         // Do not let leftover SKU evidence make this shell actionable either.
